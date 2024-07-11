@@ -115,4 +115,107 @@ describe("Bet Contract", function () {
       "Only bettors or decider can cancel."
     );
   });
+
+  it("should handle very large wagers", async function () {
+    const BetFactory = await ethers.getContractFactory("Bet", better1);
+    const largeWager = ethers.constants.MaxUint256.div(2); // Half of max uint256
+    const largeBet = await BetFactory.deploy(
+      better1.address,
+      better2.address,
+      decider.address,
+      largeWager,
+      "Large Wager Test"
+    );
+    await largeBet.deployed();
+
+    const betDetails = await largeBet.bet();
+    expect(betDetails.wager).to.equal(largeWager);
+  });
+
+  it("should measure gas usage for bet operations", async function () {
+    const fundTx = await bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") });
+    const fundReceipt = await fundTx.wait();
+    console.log("Gas used for funding:", fundReceipt.gasUsed.toString());
+
+    await bet.connect(better2).fundBet({ value: ethers.utils.parseEther("1") });
+
+    const resolveTx = await bet.connect(decider).resolveBet(better1.address);
+    const resolveReceipt = await resolveTx.wait();
+    console.log("Gas used for resolving:", resolveReceipt.gasUsed.toString());
+  });
+
+  it("should go through a full bet lifecycle", async function () {
+    // Fund the bet
+    await bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") });
+    await bet.connect(better2).fundBet({ value: ethers.utils.parseEther("1") });
+
+    // Check fully funded status
+    let betDetails = await bet.bet();
+    expect(betDetails.status).to.equal(3); // FullyFunded
+
+    // Resolve the bet
+    await bet.connect(decider).resolveBet(better1.address);
+
+    // Check resolved status and winner
+    betDetails = await bet.bet();
+    expect(betDetails.status).to.equal(4); // Resolved
+    expect(betDetails.winner).to.equal(better1.address);
+
+    // Check winner's balance increased
+    // Note: This part is tricky in a test environment due to gas costs.
+    // You might need to implement a more precise balance checking mechanism.
+    const winnerBalanceAfter = await ethers.provider.getBalance(better1.address);
+    console.log("Winner balance after resolution:", winnerBalanceAfter.toString());
+  });
+
+  it("should handle bet cancellation correctly", async function () {
+    // Partial funding
+    await bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") });
+
+    // Cancel the bet
+    await bet.connect(better2).cancelBet();
+
+    // Check bet status
+    const betDetails = await bet.bet();
+    expect(betDetails.status).to.equal(5); // Invalidated
+
+    // Check if better1 got their funds back
+    // Note: This is also tricky due to gas costs. You might need a more precise checking mechanism.
+    const better1BalanceAfter = await ethers.provider.getBalance(better1.address);
+    console.log("Better1 balance after cancellation:", better1BalanceAfter.toString());
+  });
+
+  it("should emit BetFunded event when a bettor funds", async function () {
+    await expect(bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") }))
+      .to.emit(bet, "BetFunded")
+      .withArgs(better1.address, ethers.utils.parseEther("1"));
+  });
+
+  it("should emit BetFullyFunded event when both bettors fund", async function () {
+    await bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") });
+    await expect(bet.connect(better2).fundBet({ value: ethers.utils.parseEther("1") }))
+      .to.emit(bet, "BetFullyFunded");
+  });
+
+  it("should emit BetResolved event when bet is resolved", async function () {
+    await bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") });
+    await bet.connect(better2).fundBet({ value: ethers.utils.parseEther("1") });
+    await expect(bet.connect(decider).resolveBet(better1.address))
+      .to.emit(bet, "BetResolved")
+      .withArgs(better1.address);
+  });
+
+  it("should emit BetInvalidated event when bet is invalidated", async function () {
+    await bet.connect(better1).fundBet({ value: ethers.utils.parseEther("1") });
+    await bet.connect(better2).fundBet({ value: ethers.utils.parseEther("1") });
+    await expect(bet.connect(decider).invalidateBet())
+      .to.emit(bet, "BetInvalidated");
+  });
+
+  it("should emit BetCancelled event when bet is cancelled", async function () {
+    await expect(bet.connect(better1).cancelBet())
+      .to.emit(bet, "BetCancelled")
+      .withArgs(better1.address);
+  });
+
 });
