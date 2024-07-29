@@ -1,0 +1,26 @@
+specVersion: 1.0.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: BetFactory
+    network: base
+    source:
+      address: "0xA32DbbA5427fEE87D3CC6CbF85Cd42A75E2F413C"
+      abi: BetFactory
+      startBlock: 17012753
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - BetCreated
+      abis:
+        - name: BetFactory
+          file: ./abis/BetFactory.json
+      eventHandlers:
+        - event: BetCreated(address,address,address,address,uint256,string)
+          handler: handleBetCreated
+      file: ./src/bet-factory.ts

@@ -1,0 +1,12 @@
+type BetCreated @entity(immutable: true) {
+  id: Bytes!
+  betAddress: Bytes! # address
+  better1: Bytes! # address
+  better2: Bytes! # address
+  decider: Bytes! # address
+  wager: BigInt! # uint256
+  conditions: String! # string
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  transactionHash: Bytes!
+}
