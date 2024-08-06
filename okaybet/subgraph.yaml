@@ -1,6 +1,4 @@
-specVersion: 1.0.0
-indexerHints:
-  prune: auto
+specVersion: 0.0.4
 schema:
   file: ./schema.graphql
 dataSources:
@@ -16,7 +14,7 @@ dataSources:
       apiVersion: 0.0.7
       language: wasm/assemblyscript
       entities:
-        - BetCreated
+        - Bet
       abis:
         - name: BetFactory
           file: ./abis/BetFactory.json
@@ -24,3 +22,30 @@ dataSources:
         - event: BetCreated(address,address,address,address,uint256,string)
           handler: handleBetCreated
       file: ./src/bet-factory.ts
+templates:
+  - kind: ethereum/contract
+    name: Bet
+    network: base
+    source:
+      abi: Bet
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/bet.ts
+      entities:
+        - Bet
+      abis:
+        - name: Bet
+          file: ./abis/Bet.json
+      eventHandlers:
+        - event: BetCancelled(address)
+          handler: handleBetCancelled
+        - event: BetFullyFunded()
+          handler: handleBetFullyFunded
+        - event: BetFunded(address,uint256)
+          handler: handleBetFunded
+        - event: BetInvalidated()
+          handler: handleBetInvalidated
+        - event: BetResolved(address)
+          handler: handleBetResolved
