@@ -1,0 +1,3 @@
+[submodule "usdc_hook/lib/forge-std"]
+	path = usdc_hook/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
