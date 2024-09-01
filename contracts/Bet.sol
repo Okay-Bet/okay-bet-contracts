@@ -1,113 +1,166 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 contract Bet {
-    enum BetStatus { Unfunded, Better1Funded, Better2Funded, FullyFunded, Resolved, Invalidated }    
+    enum BetStatus { Unfunded, PartiallyFunded, FullyFunded, Resolved, Invalidated, Expired }
+    
     struct BetDetails {
-        address better1;
-        address better2;
-        address decider;
-        uint256 wager;
+        address maker;
+        address taker;
+        address judge;
+        uint256 totalWager;
+        uint8 wagerRatio; // 0-100, represents maker's share. 50 means equal split.
         string conditions;
         BetStatus status;
         address winner;
+        uint256 expirationBlock;
     }
     
     BetDetails public bet;
-    mapping(address => bool) public hasFunded;
+    IERC20 public usdcToken;
+    mapping(address => uint256) public fundedAmount;
 
-    event BetCreated(address better1, address better2, address decider, uint256 wager, string conditions);
-    event BetFunded(address funder, uint256 amount);
+    event BetCreated(address indexed maker, address indexed taker, address indexed judge, uint256 totalWager, uint8 wagerRatio, string conditions, uint256 expirationBlock);
+    event BetFunded(address indexed funder, uint256 amount);
     event BetFullyFunded();
-    event BetResolved(address winner);
+    event BetResolved(address indexed winner, uint256 amount);
     event BetInvalidated();
-    event BetCancelled(address canceller);
+    event BetCancelled(address indexed canceller);
+    event BetExpired();
+    event PayoutFailed(address indexed recipient, uint256 amount);
 
-    constructor(address _better1, address _better2, address _decider, uint256 _wager, string memory _conditions) {
-        require(_better1 != _better2, "Bettors must be different addresses");
-        require(_better1 != address(0) && _better2 != address(0) && _decider != address(0), "Invalid address");
-        require(_wager > 0, "Wager must be greater than 0");
+    constructor(
+        address _maker,
+        address _taker,
+        address _judge,
+        uint256 _totalWager,
+        uint8 _wagerRatio,
+        string memory _conditions,
+        address _usdcAddress,
+        uint256 _expirationBlocks
+    ) {
+        require(_maker != _taker, "Maker and taker must be different addresses");
+        require(_maker != address(0) && _taker != address(0) && _judge != address(0), "Invalid address");
+        require(_totalWager > 0, "Total wager must be greater than 0");
+        require(_wagerRatio >= 0 && _wagerRatio <= 100, "Wager ratio must be between 0 and 100");
         
-        bet.better1 = _better1;
-        bet.better2 = _better2;
-        bet.decider = _decider;
-        bet.wager = _wager;
+        bet.maker = _maker;
+        bet.taker = _taker;
+        bet.judge = _judge;
+        bet.totalWager = _totalWager;
+        bet.wagerRatio = _wagerRatio;
         bet.conditions = _conditions;
         bet.status = BetStatus.Unfunded;
+        bet.expirationBlock = block.number + _expirationBlocks;
+        usdcToken = IERC20(_usdcAddress);
         
-        emit BetCreated(_better1, _better2, _decider, _wager, _conditions);
+        emit BetCreated(_maker, _taker, _judge, _totalWager, _wagerRatio, _conditions, bet.expirationBlock);
     }
 
-    function fundBet() public payable {
-        require(msg.sender == bet.better1 || msg.sender == bet.better2, "Only the bettors can fund the bet.");
-        require(bet.status == BetStatus.Unfunded || bet.status == BetStatus.Better1Funded || bet.status == BetStatus.Better2Funded, "Bet is not in a fundable state.");
-        require(msg.value == bet.wager, "Incorrect wager amount.");
-        require(!hasFunded[msg.sender], "You have already funded your part.");
-
-        hasFunded[msg.sender] = true;
-
-        if (msg.sender == bet.better1) {
-            require(bet.status == BetStatus.Unfunded || bet.status == BetStatus.Better2Funded, "Better1 has already funded.");
-            bet.status = bet.status == BetStatus.Better2Funded ? BetStatus.FullyFunded : BetStatus.Better1Funded;
-        } else {
-            require(bet.status == BetStatus.Unfunded || bet.status == BetStatus.Better1Funded, "Better2 has already funded.");
-            bet.status = bet.status == BetStatus.Better1Funded ? BetStatus.FullyFunded : BetStatus.Better2Funded;
+    function getWagerAmount(address bettor) public view returns (uint256) {
+        if (bettor == bet.maker) {
+            return (bet.totalWager * bet.wagerRatio) / 100;
+        } else if (bettor == bet.taker) {
+            return (bet.totalWager * (100 - bet.wagerRatio)) / 100;
         }
+        return 0;
+    }
 
-        emit BetFunded(msg.sender, msg.value);
+    function fundBet(uint256 amount) public {
+        require(msg.sender == bet.maker || msg.sender == bet.taker, "Only the maker or taker can fund the bet.");
+        require(bet.status == BetStatus.Unfunded || bet.status == BetStatus.PartiallyFunded, "Bet is not in a fundable state.");
+        require(block.number < bet.expirationBlock, "Bet has expired");
+        
+        uint256 expectedAmount = getWagerAmount(msg.sender);
+        require(amount + fundedAmount[msg.sender] <= expectedAmount, "Overfunding not allowed.");
 
-        if (bet.status == BetStatus.FullyFunded) {
+        require(usdcToken.transferFrom(msg.sender, address(this), amount), "USDC transfer failed");
+        
+        fundedAmount[msg.sender] += amount;
+        
+        emit BetFunded(msg.sender, amount);
+
+        if (fundedAmount[bet.maker] == getWagerAmount(bet.maker) && 
+            fundedAmount[bet.taker] == getWagerAmount(bet.taker)) {
+            bet.status = BetStatus.FullyFunded;
             emit BetFullyFunded();
+        } else if (bet.status == BetStatus.Unfunded) {
+            bet.status = BetStatus.PartiallyFunded;
         }
     }
-
 
     function resolveBet(address _winner) public {
-        require(msg.sender == bet.decider, "Only the decider can resolve the bet.");
+        require(msg.sender == bet.judge, "Only the judge can resolve the bet.");
         require(bet.status == BetStatus.FullyFunded, "Bet is not fully funded.");
-        require(_winner == bet.better1 || _winner == bet.better2, "Invalid winner address.");
+        require(_winner == bet.maker || _winner == bet.taker, "Invalid winner address.");
+        require(block.number < bet.expirationBlock, "Bet has expired");
         
         bet.winner = _winner;
         bet.status = BetStatus.Resolved;
         
-        emit BetResolved(_winner);
+        bool success = usdcToken.transfer(_winner, bet.totalWager);
         
-        payable(_winner).transfer(address(this).balance);
+        if (success) {
+            emit BetResolved(_winner, bet.totalWager);
+        } else {
+            emit PayoutFailed(_winner, bet.totalWager);
+            bet.status = BetStatus.FullyFunded; // Revert to fully funded state
+        }
     }
 
-    function invalidateBet() public {
-        require(msg.sender == bet.decider, "Only the decider can invalidate the bet.");
-        require(bet.status == BetStatus.FullyFunded, "Bet is not fully funded.");
+    function checkExpiration() public {
+        require(bet.status == BetStatus.FullyFunded, "Bet is not in a state that can expire");
+        require(block.number >= bet.expirationBlock, "Bet has not expired yet");
         
-        bet.status = BetStatus.Invalidated;
+        bet.status = BetStatus.Expired;
+        emit BetExpired();
         
-        emit BetInvalidated();
-        
-        if (hasFunded[bet.better1]) {
-            payable(bet.better1).transfer(bet.wager);
-        }
-        if (hasFunded[bet.better2]) {
-            payable(bet.better2).transfer(bet.wager);
-        }
+        _refundBettors();
     }
 
     function cancelBet() public {
-        require(msg.sender == bet.better1 || msg.sender == bet.better2 || msg.sender == bet.decider, "Only bettors or decider can cancel.");
-        require(bet.status != BetStatus.Resolved && bet.status != BetStatus.Invalidated, "Bet cannot be cancelled.");
+        require(msg.sender == bet.maker || msg.sender == bet.taker || msg.sender == bet.judge, "Only maker, taker, or judge can cancel.");
+        require(bet.status != BetStatus.Resolved && bet.status != BetStatus.Invalidated && bet.status != BetStatus.Expired, "Bet cannot be cancelled.");
         
         if (bet.status == BetStatus.FullyFunded) {
-            require(msg.sender == bet.decider, "Only decider can cancel a fully funded bet.");
+            require(msg.sender == bet.judge, "Only judge can cancel a fully funded bet.");
+            require(block.number < bet.expirationBlock, "Bet has expired");
         }
         
         bet.status = BetStatus.Invalidated;
         
         emit BetCancelled(msg.sender);
         
-        if (hasFunded[bet.better1]) {
-            payable(bet.better1).transfer(bet.wager);
+        _refundBettors();
+    }
+
+    function invalidateBet() public {
+        require(msg.sender == bet.judge, "Only the judge can invalidate the bet.");
+        require(bet.status == BetStatus.FullyFunded, "Bet is not fully funded.");
+        require(block.number < bet.expirationBlock, "Bet has expired");
+        
+        bet.status = BetStatus.Invalidated;
+        
+        emit BetInvalidated();
+        
+        _refundBettors();
+    }
+
+    function _refundBettors() private {
+        // Refund each bettor only the amount they have funded, which may be uneven
+        if (fundedAmount[bet.maker] > 0) {
+            bool success = usdcToken.transfer(bet.maker, fundedAmount[bet.maker]);
+            if (!success) {
+                emit PayoutFailed(bet.maker, fundedAmount[bet.maker]);
+            }
         }
-        if (hasFunded[bet.better2]) {
-            payable(bet.better2).transfer(bet.wager);
+        if (fundedAmount[bet.taker] > 0) {
+            bool success = usdcToken.transfer(bet.taker, fundedAmount[bet.taker]);
+            if (!success) {
+                emit PayoutFailed(bet.taker, fundedAmount[bet.taker]);
+            }
         }
     }
 }

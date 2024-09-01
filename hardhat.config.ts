@@ -10,12 +10,13 @@ const config: HardhatUserConfig = {
     sources: "./contracts",
     tests: "./test",
     cache: "./cache",
-    artifacts: "./artifacts"
+    artifacts: "./artifacts",
   },
   typechain: {
     outDir: "typechain-types",
     target: "ethers-v5",
   },
+  exclude: ["**/Archive/**", "**/**/Archive/**", "**/node_modules/**"],
 };
 
 export default config;

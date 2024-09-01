@@ -31,3 +31,7 @@ npm run release
 # or
 yarn release
 ```
+
+## Archives
+
+Old contracts and tests are in the Archives folder

@@ -1,10 +1,12 @@
 {
   "compilerOptions": {
-    "target": "es2020",
+    "target": "es2018",
     "module": "commonjs",
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
     "strict": true,
-    "skipLibCheck": true
-  }
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "resolveJsonModule": true
+  },
+  "include": ["./scripts", "./test", "./typechain-types", "Archive/V1/tests/Bet.test.ts", "Archive/V1/tests/BetFactory.test.ts"],
+  "exclude": ["node_modules", "**/Archive/**", "**/**/Archive/**"]
 }
