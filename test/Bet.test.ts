@@ -1,5 +1,6 @@
-import { expect } from "chai";
+import { expect, anything } from "chai";
 import { ethers } from "hardhat";
+import { BigNumber } from "ethers";
 import {
   Bet,
   BetFactory,
@@ -84,12 +85,44 @@ describe("Bet Contract", function () {
 
       await expect(bet.connect(maker).fundBet(totalWager.div(2)))
         .to.emit(bet, "BetFunded")
-        .withArgs(maker.address, totalWager.div(2));
+        .withArgs(bet.address, maker.address, totalWager.div(2), 1); // 1 is for PartiallyFunded status
 
-      await expect(bet.connect(taker).fundBet(totalWager.div(2)))
-        .to.emit(bet, "BetFunded")
-        .withArgs(taker.address, totalWager.div(2))
-        .to.emit(bet, "BetFullyFunded");
+      const fundTakerTx = await bet.connect(taker).fundBet(totalWager.div(2));
+      const receipt = await fundTakerTx.wait();
+
+      // Check for BetFunded event
+      const betFundedEvent = receipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(betFundedEvent).to.not.be.undefined;
+      if (betFundedEvent) {
+        expect(betFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betFundedEvent.args?.funder).to.equal(taker.address);
+        expect(betFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(betFundedEvent.args?.newStatus).to.equal(2);
+      }
+
+      // Check for BetStatusChanged event
+      const betStatusChangedEvent = receipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(betStatusChangedEvent).to.not.be.undefined;
+      if (betStatusChangedEvent) {
+        expect(betStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betStatusChangedEvent.args?.oldStatus).to.equal(1);
+        expect(betStatusChangedEvent.args?.newStatus).to.equal(2);
+        expect(betStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+
+        // Convert BigNumber to number and check if it's a valid timestamp
+        const timestamp = (
+          betStatusChangedEvent.args?.timestamp as BigNumber
+        ).toNumber();
+        expect(timestamp).to.be.a("number");
+        expect(timestamp).to.be.greaterThan(0);
+        expect(timestamp).to.be.lessThan(Date.now() / 1000 + 1000); // Allow some future tolerance
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(2); // FullyFunded
@@ -101,9 +134,44 @@ describe("Bet Contract", function () {
       await bet.connect(maker).fundBet(totalWager.div(2));
       await bet.connect(taker).fundBet(totalWager.div(2));
 
-      await expect(bet.connect(judge).resolveBet(maker.address))
-        .to.emit(bet, "BetResolved")
-        .withArgs(maker.address, totalWager);
+      const resolveTx = await bet.connect(judge).resolveBet(maker.address);
+      const receipt = await resolveTx.wait();
+
+      // Check for BetResolved event
+      const betResolvedEvent = receipt.events?.find(
+        (e) => e.event === "BetResolved"
+      );
+      expect(betResolvedEvent).to.not.be.undefined;
+      if (betResolvedEvent) {
+        expect(betResolvedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betResolvedEvent.args?.winner).to.equal(maker.address);
+        expect(betResolvedEvent.args?.winningAmount).to.equal(totalWager);
+        expect(betResolvedEvent.args?.resolutionTimestamp).to.be.instanceOf(
+          BigNumber
+        );
+
+        // Convert BigNumber to number and check if it's a valid timestamp
+        const timestamp = (
+          betResolvedEvent.args?.resolutionTimestamp as BigNumber
+        ).toNumber();
+        expect(timestamp).to.be.a("number");
+        expect(timestamp).to.be.greaterThan(0);
+        expect(timestamp).to.be.lessThan(Date.now() / 1000 + 1000); // Allow some future tolerance
+      }
+
+      // Check for BetStatusChanged event
+      const betStatusChangedEvent = receipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(betStatusChangedEvent).to.not.be.undefined;
+      if (betStatusChangedEvent) {
+        expect(betStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betStatusChangedEvent.args?.oldStatus).to.equal(2); // FullyFunded
+        expect(betStatusChangedEvent.args?.newStatus).to.equal(3); // Resolved
+        expect(betStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(3); // Resolved
@@ -111,9 +179,44 @@ describe("Bet Contract", function () {
     });
 
     it("should allow cancelling an unfunded bet", async function () {
-      await expect(bet.connect(maker).cancelBet())
-        .to.emit(bet, "BetCancelled")
-        .withArgs(maker.address);
+      const cancelTx = await bet.connect(maker).cancelBet();
+      const receipt = await cancelTx.wait();
+
+      // Check for BetInvalidated event
+      const betInvalidatedEvent = receipt.events?.find(
+        (e) => e.event === "BetInvalidated"
+      );
+      expect(betInvalidatedEvent).to.not.be.undefined;
+      if (betInvalidatedEvent) {
+        expect(betInvalidatedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betInvalidatedEvent.args?.invalidator).to.equal(maker.address);
+        expect(betInvalidatedEvent.args?.reason).to.equal("Bet cancelled");
+        expect(
+          betInvalidatedEvent.args?.invalidationTimestamp
+        ).to.be.instanceOf(BigNumber);
+
+        // Convert BigNumber to number and check if it's a valid timestamp
+        const timestamp = (
+          betInvalidatedEvent.args?.invalidationTimestamp as BigNumber
+        ).toNumber();
+        expect(timestamp).to.be.a("number");
+        expect(timestamp).to.be.greaterThan(0);
+        expect(timestamp).to.be.lessThan(Date.now() / 1000 + 1000); // Allow some future tolerance
+      }
+
+      // Check for BetStatusChanged event
+      const betStatusChangedEvent = receipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(betStatusChangedEvent).to.not.be.undefined;
+      if (betStatusChangedEvent) {
+        expect(betStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betStatusChangedEvent.args?.oldStatus).to.equal(0); // Unfunded
+        expect(betStatusChangedEvent.args?.newStatus).to.equal(4); // Invalidated
+        expect(betStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(4); // Invalidated
@@ -137,8 +240,47 @@ describe("Bet Contract", function () {
     it("should handle bet expiration", async function () {
       await usdcToken.connect(maker).approve(bet.address, totalWager.div(2));
       await usdcToken.connect(taker).approve(bet.address, totalWager.div(2));
-      await bet.connect(maker).fundBet(totalWager.div(2));
-      await bet.connect(taker).fundBet(totalWager.div(2));
+
+      // Fund the bet with maker
+      const fundMakerTx = await bet.connect(maker).fundBet(totalWager.div(2));
+      const makerReceipt = await fundMakerTx.wait();
+
+      const makerFundedEvent = makerReceipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(makerFundedEvent).to.not.be.undefined;
+      if (makerFundedEvent) {
+        expect(makerFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(makerFundedEvent.args?.funder).to.equal(maker.address);
+        expect(makerFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(makerFundedEvent.args?.newStatus).to.equal(1); // PartiallyFunded
+      }
+
+      // Fund the bet with taker
+      const fundTakerTx = await bet.connect(taker).fundBet(totalWager.div(2));
+      const takerReceipt = await fundTakerTx.wait();
+
+      const takerFundedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(takerFundedEvent).to.not.be.undefined;
+      if (takerFundedEvent) {
+        expect(takerFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(takerFundedEvent.args?.funder).to.equal(taker.address);
+        expect(takerFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(takerFundedEvent.args?.newStatus).to.equal(2); // FullyFunded
+      }
+
+      const statusChangedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(statusChangedEvent).to.not.be.undefined;
+      if (statusChangedEvent) {
+        expect(statusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(statusChangedEvent.args?.oldStatus).to.equal(1); // PartiallyFunded
+        expect(statusChangedEvent.args?.newStatus).to.equal(2); // FullyFunded
+        expect(statusChangedEvent.args?.timestamp).to.be.instanceOf(BigNumber);
+      }
 
       // Fast forward time
       const secondsInAWeek = 7 * 24 * 60 * 60;
@@ -149,7 +291,34 @@ describe("Bet Contract", function () {
         await ethers.provider.send("evm_mine", []);
       }
 
-      await expect(bet.checkExpiration()).to.emit(bet, "BetExpired");
+      const expirationTx = await bet.checkExpiration();
+      const expirationReceipt = await expirationTx.wait();
+
+      const betInvalidatedEvent = expirationReceipt.events?.find(
+        (e) => e.event === "BetInvalidated"
+      );
+      expect(betInvalidatedEvent).to.not.be.undefined;
+      if (betInvalidatedEvent) {
+        expect(betInvalidatedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betInvalidatedEvent.args?.invalidator).to.equal(bet.address);
+        expect(betInvalidatedEvent.args?.reason).to.equal("Bet expired");
+        expect(
+          betInvalidatedEvent.args?.invalidationTimestamp
+        ).to.be.instanceOf(BigNumber);
+      }
+
+      const finalStatusChangedEvent = expirationReceipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(finalStatusChangedEvent).to.not.be.undefined;
+      if (finalStatusChangedEvent) {
+        expect(finalStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(finalStatusChangedEvent.args?.oldStatus).to.equal(2); // FullyFunded
+        expect(finalStatusChangedEvent.args?.newStatus).to.equal(5); // Expired
+        expect(finalStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(5); // Expired
@@ -199,22 +368,50 @@ describe("Bet Contract", function () {
     });
 
     it("should allow funding the bet with ETH", async function () {
-      await expect(
-        bet
-          .connect(maker)
-          .fundBet(totalWager.div(2), { value: totalWager.div(2) })
-      )
-        .to.emit(bet, "BetFunded")
-        .withArgs(maker.address, totalWager.div(2));
+      // Fund the bet with maker
+      const fundMakerTx = await bet
+        .connect(maker)
+        .fundBet(totalWager.div(2), { value: totalWager.div(2) });
+      const makerReceipt = await fundMakerTx.wait();
 
-      await expect(
-        bet
-          .connect(taker)
-          .fundBet(totalWager.div(2), { value: totalWager.div(2) })
-      )
-        .to.emit(bet, "BetFunded")
-        .withArgs(taker.address, totalWager.div(2))
-        .to.emit(bet, "BetFullyFunded");
+      const makerFundedEvent = makerReceipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(makerFundedEvent).to.not.be.undefined;
+      if (makerFundedEvent) {
+        expect(makerFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(makerFundedEvent.args?.funder).to.equal(maker.address);
+        expect(makerFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(makerFundedEvent.args?.newStatus).to.equal(1); // PartiallyFunded
+      }
+
+      // Fund the bet with taker
+      const fundTakerTx = await bet
+        .connect(taker)
+        .fundBet(totalWager.div(2), { value: totalWager.div(2) });
+      const takerReceipt = await fundTakerTx.wait();
+
+      const takerFundedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(takerFundedEvent).to.not.be.undefined;
+      if (takerFundedEvent) {
+        expect(takerFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(takerFundedEvent.args?.funder).to.equal(taker.address);
+        expect(takerFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(takerFundedEvent.args?.newStatus).to.equal(2); // FullyFunded
+      }
+
+      const statusChangedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(statusChangedEvent).to.not.be.undefined;
+      if (statusChangedEvent) {
+        expect(statusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(statusChangedEvent.args?.oldStatus).to.equal(1); // PartiallyFunded
+        expect(statusChangedEvent.args?.newStatus).to.equal(2); // FullyFunded
+        expect(statusChangedEvent.args?.timestamp).to.be.instanceOf(BigNumber);
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(2); // FullyFunded
@@ -230,14 +427,46 @@ describe("Bet Contract", function () {
       await daiToken.connect(maker).approve(bet.address, totalWager.div(2));
       await daiToken.connect(taker).approve(bet.address, totalWager.div(2));
 
-      await expect(bet.connect(maker).fundBet(totalWager.div(2)))
-        .to.emit(bet, "BetFunded")
-        .withArgs(maker.address, totalWager.div(2));
+      // Fund the bet with maker
+      const fundMakerTx = await bet.connect(maker).fundBet(totalWager.div(2));
+      const makerReceipt = await fundMakerTx.wait();
 
-      await expect(bet.connect(taker).fundBet(totalWager.div(2)))
-        .to.emit(bet, "BetFunded")
-        .withArgs(taker.address, totalWager.div(2))
-        .to.emit(bet, "BetFullyFunded");
+      const makerFundedEvent = makerReceipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(makerFundedEvent).to.not.be.undefined;
+      if (makerFundedEvent) {
+        expect(makerFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(makerFundedEvent.args?.funder).to.equal(maker.address);
+        expect(makerFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(makerFundedEvent.args?.newStatus).to.equal(1); // PartiallyFunded
+      }
+
+      // Fund the bet with taker
+      const fundTakerTx = await bet.connect(taker).fundBet(totalWager.div(2));
+      const takerReceipt = await fundTakerTx.wait();
+
+      const takerFundedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetFunded"
+      );
+      expect(takerFundedEvent).to.not.be.undefined;
+      if (takerFundedEvent) {
+        expect(takerFundedEvent.args?.betAddress).to.equal(bet.address);
+        expect(takerFundedEvent.args?.funder).to.equal(taker.address);
+        expect(takerFundedEvent.args?.amount).to.equal(totalWager.div(2));
+        expect(takerFundedEvent.args?.newStatus).to.equal(2); // FullyFunded
+      }
+
+      const statusChangedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(statusChangedEvent).to.not.be.undefined;
+      if (statusChangedEvent) {
+        expect(statusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(statusChangedEvent.args?.oldStatus).to.equal(1); // PartiallyFunded
+        expect(statusChangedEvent.args?.newStatus).to.equal(2); // FullyFunded
+        expect(statusChangedEvent.args?.timestamp).to.be.instanceOf(BigNumber);
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(2); // FullyFunded
@@ -459,9 +688,36 @@ describe("Bet Contract", function () {
     });
 
     it("should finalize bet when resolved", async function () {
-      await expect(bet.connect(judge).resolveBet(maker.address))
-        .to.emit(bet, "BetResolved")
-        .withArgs(maker.address, totalWager);
+      const resolveTx = await bet.connect(judge).resolveBet(maker.address);
+      const receipt = await resolveTx.wait();
+
+      // Check for BetResolved event
+      const betResolvedEvent = receipt.events?.find(
+        (e) => e.event === "BetResolved"
+      );
+      expect(betResolvedEvent).to.not.be.undefined;
+      if (betResolvedEvent) {
+        expect(betResolvedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betResolvedEvent.args?.winner).to.equal(maker.address);
+        expect(betResolvedEvent.args?.winningAmount).to.equal(totalWager);
+        expect(betResolvedEvent.args?.resolutionTimestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
+
+      // Check for BetStatusChanged event
+      const betStatusChangedEvent = receipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(betStatusChangedEvent).to.not.be.undefined;
+      if (betStatusChangedEvent) {
+        expect(betStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(betStatusChangedEvent.args?.oldStatus).to.equal(2); // FullyFunded
+        expect(betStatusChangedEvent.args?.newStatus).to.equal(3); // Resolved
+        expect(betStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(3); // Resolved
@@ -477,19 +733,69 @@ describe("Bet Contract", function () {
     it("should allow maker or taker to cancel before fully funded", async function () {
       // Deploy a new bet without funding it
       await deployBet(50, usdcToken.address);
-      
+
       // Maker should be able to cancel
-      await expect(bet.connect(maker).cancelBet())
-        .to.emit(bet, "BetCancelled")
-        .withArgs(maker.address);
-      
+      const makerCancelTx = await bet.connect(maker).cancelBet();
+      const makerReceipt = await makerCancelTx.wait();
+
+      const makerInvalidatedEvent = makerReceipt.events?.find(
+        (e) => e.event === "BetInvalidated"
+      );
+      expect(makerInvalidatedEvent).to.not.be.undefined;
+      if (makerInvalidatedEvent) {
+        expect(makerInvalidatedEvent.args?.betAddress).to.equal(bet.address);
+        expect(makerInvalidatedEvent.args?.invalidator).to.equal(maker.address);
+        expect(makerInvalidatedEvent.args?.reason).to.equal("Bet cancelled");
+        expect(
+          makerInvalidatedEvent.args?.invalidationTimestamp
+        ).to.be.instanceOf(BigNumber);
+      }
+
+      const makerStatusChangedEvent = makerReceipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(makerStatusChangedEvent).to.not.be.undefined;
+      if (makerStatusChangedEvent) {
+        expect(makerStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(makerStatusChangedEvent.args?.oldStatus).to.equal(0); // Unfunded
+        expect(makerStatusChangedEvent.args?.newStatus).to.equal(4); // Invalidated
+        expect(makerStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
+
       // Deploy another new bet
       await deployBet(50, usdcToken.address);
-      
+
       // Taker should be able to cancel
-      await expect(bet.connect(taker).cancelBet())
-        .to.emit(bet, "BetCancelled")
-        .withArgs(taker.address);
+      const takerCancelTx = await bet.connect(taker).cancelBet();
+      const takerReceipt = await takerCancelTx.wait();
+
+      const takerInvalidatedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetInvalidated"
+      );
+      expect(takerInvalidatedEvent).to.not.be.undefined;
+      if (takerInvalidatedEvent) {
+        expect(takerInvalidatedEvent.args?.betAddress).to.equal(bet.address);
+        expect(takerInvalidatedEvent.args?.invalidator).to.equal(taker.address);
+        expect(takerInvalidatedEvent.args?.reason).to.equal("Bet cancelled");
+        expect(
+          takerInvalidatedEvent.args?.invalidationTimestamp
+        ).to.be.instanceOf(BigNumber);
+      }
+
+      const takerStatusChangedEvent = takerReceipt.events?.find(
+        (e) => e.event === "BetStatusChanged"
+      );
+      expect(takerStatusChangedEvent).to.not.be.undefined;
+      if (takerStatusChangedEvent) {
+        expect(takerStatusChangedEvent.args?.betAddress).to.equal(bet.address);
+        expect(takerStatusChangedEvent.args?.oldStatus).to.equal(0); // Unfunded
+        expect(takerStatusChangedEvent.args?.newStatus).to.equal(4); // Invalidated
+        expect(takerStatusChangedEvent.args?.timestamp).to.be.instanceOf(
+          BigNumber
+        );
+      }
     });
 
     it("should finalize bet when cancelled", async function () {

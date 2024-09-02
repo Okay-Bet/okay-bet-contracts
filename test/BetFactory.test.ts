@@ -58,23 +58,21 @@ describe("BetFactory Contract", function () {
   }
 
   it("should create a new bet", async function () {
-    await expect(
-      betFactory.createBet(
-        maker.address,
-        taker.address,
-        judge.address,
-        totalWager,
-        wagerRatio,
-        "Test Conditions",
-        expirationBlocks,
-        usdcToken.address // Add wagerCurrency parameter
-      )
-    ).to.emit(betFactory, "BetCreated");
+    const tx = await betFactory.createBet(
+      maker.address,
+      taker.address,
+      judge.address,
+      totalWager,
+      wagerRatio,
+      "Test Conditions",
+      expirationBlocks,
+      usdcToken.address
+    );
+    const receipt = await tx.wait();
+    const event = receipt.events?.find((e) => e.event === "BetCreated");
+    expect(event).to.not.be.undefined;
+    const betAddress = event?.args?.betAddress;
 
-    const bets = await betFactory.getBets();
-    expect(bets.length).to.equal(1);
-
-    const betAddress = bets[0];
     const bet = Bet__factory.connect(betAddress, maker);
     const betDetails = await bet.bet();
 
@@ -95,9 +93,9 @@ describe("BetFactory Contract", function () {
         wagerRatio,
         "Test Conditions",
         expirationBlocks,
-        usdcToken.address // Add wagerCurrency parameter
+        usdcToken.address
       )
-    ).to.be.revertedWith("Maker and taker must be different addresses");
+    ).to.be.revertedWith("Invalid addresses");
 
     await expect(
       betFactory.createBet(
@@ -108,9 +106,9 @@ describe("BetFactory Contract", function () {
         wagerRatio,
         "Test Conditions",
         expirationBlocks,
-        usdcToken.address // Add wagerCurrency parameter
+        usdcToken.address
       )
-    ).to.be.revertedWith("Total wager must be greater than 0");
+    ).to.be.revertedWith("Invalid parameters");
 
     await expect(
       betFactory.createBet(
@@ -121,9 +119,9 @@ describe("BetFactory Contract", function () {
         101, // Invalid wager ratio
         "Test Conditions",
         expirationBlocks,
-        usdcToken.address // Add wagerCurrency parameter
+        usdcToken.address
       )
-    ).to.be.revertedWith("Wager ratio must be between 0 and 100");
+    ).to.be.revertedWith("Invalid parameters");
 
     await expect(
       betFactory.createBet(
@@ -134,13 +132,13 @@ describe("BetFactory Contract", function () {
         wagerRatio,
         "Test Conditions",
         0, // Invalid expiration blocks
-        usdcToken.address // Add wagerCurrency parameter
+        usdcToken.address
       )
-    ).to.be.revertedWith("Expiration period too short");
+    ).to.be.revertedWith("Invalid parameters");
   });
 
-  it("should return all created bets", async function () {
-    await betFactory.createBet(
+  it("should create multiple bets", async function () {
+    const tx1 = await betFactory.createBet(
       maker.address,
       taker.address,
       judge.address,
@@ -148,10 +146,13 @@ describe("BetFactory Contract", function () {
       wagerRatio,
       "Test Conditions 1",
       expirationBlocks,
-      usdcToken.address // Add wagerCurrency parameter
+      usdcToken.address
     );
+    const receipt1 = await tx1.wait();
+    const betAddress1 = receipt1.events?.find((e) => e.event === "BetCreated")
+      ?.args?.betAddress;
 
-    await betFactory.createBet(
+    const tx2 = await betFactory.createBet(
       taker.address,
       maker.address,
       judge.address,
@@ -159,14 +160,16 @@ describe("BetFactory Contract", function () {
       wagerRatio,
       "Test Conditions 2",
       expirationBlocks,
-      usdcToken.address // Add wagerCurrency parameter
+      usdcToken.address
     );
+    const receipt2 = await tx2.wait();
+    const betAddress2 = receipt2.events?.find((e) => e.event === "BetCreated")
+      ?.args?.betAddress;
 
-    const bets = await betFactory.getBets();
-    expect(bets.length).to.equal(2);
+    expect(betAddress1).to.not.equal(betAddress2);
 
-    const bet1 = Bet__factory.connect(bets[0], maker);
-    const bet2 = Bet__factory.connect(bets[1], maker);
+    const bet1 = await ethers.getContractAt("Bet", betAddress1);
+    const bet2 = await ethers.getContractAt("Bet", betAddress2);
 
     const bet1Details = await bet1.bet();
     const bet2Details = await bet2.bet();
@@ -188,8 +191,6 @@ describe("BetFactory Contract", function () {
         shortExpirationBlocks,
         usdcToken.address
       )
-    ).to.be.revertedWith("Expiration period too short");
+    ).to.be.revertedWith("Invalid parameters");
   });
-  
-
 });

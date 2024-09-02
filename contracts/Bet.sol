@@ -23,15 +23,47 @@ contract Bet {
     IERC20 public wagerCurrency;
     mapping(address => uint256) public fundedAmount;
 
-    event BetCreated(address indexed maker, address indexed taker, address indexed judge, uint256 totalWager, uint8 wagerRatio, string conditions, uint256 expirationBlock);
-    event BetFunded(address indexed funder, uint256 amount);
-    event BetFullyFunded();
-    event BetResolved(address indexed winner, uint256 amount);
-    event BetInvalidated();
-    event BetCancelled(address indexed canceller);
-    event BetExpired();
+    event BetCreated(
+        address indexed betAddress,
+        address indexed maker,
+        address indexed taker,
+        address judge,
+        uint256 totalWager,
+        uint8 wagerRatio,
+        string conditions,
+        uint64 creationTimestamp,
+        uint32 expirationBlock
+    );
+
+    event BetFunded(
+        address indexed betAddress,
+        address indexed funder,
+        uint256 amount,
+        BetStatus newStatus
+    );
+
+    event BetStatusChanged(
+        address indexed betAddress,
+        BetStatus indexed oldStatus,
+        BetStatus indexed newStatus,
+        uint64 timestamp
+    );
+
+    event BetResolved(
+        address indexed betAddress,
+        address indexed winner,
+        uint256 winningAmount,
+        uint64 resolutionTimestamp
+    );
+
+    event BetInvalidated(
+        address indexed betAddress,
+        address indexed invalidator,
+        string reason,
+        uint64 invalidationTimestamp
+    );
+
     event PayoutFailed(address indexed recipient, uint256 amount);
-    event BetFinalized();
 
     modifier notFinalized() {
         require(!bet.finalized, "Bet has been finalized");
@@ -64,7 +96,17 @@ contract Bet {
         bet.finalized = false;
         wagerCurrency = _wagerCurrency == address(0) ? IERC20(address(0)) : IERC20(_wagerCurrency);
 
-        emit BetCreated(_maker, _taker, _judge, _totalWager, _wagerRatio, _conditions, bet.expirationBlock);
+        emit BetCreated(
+            address(this),
+            _maker,
+            _taker,
+            _judge,
+            _totalWager,
+            _wagerRatio,
+            _conditions,
+            uint64(block.timestamp),
+            uint32(bet.expirationBlock)
+        );
     }
 
     function getWagerAmount(address bettor) public view returns (uint256) {
@@ -95,15 +137,19 @@ contract Bet {
         
         fundedAmount[funder] += amount;
         
-        emit BetFunded(funder, amount);
-
+        BetStatus oldStatus = bet.status;
         if (fundedAmount[bet.maker] == getWagerAmount(bet.maker) && 
             fundedAmount[bet.taker] == getWagerAmount(bet.taker)) {
             bet.status = BetStatus.FullyFunded;
-            emit BetFullyFunded();
         } else if (bet.status == BetStatus.Unfunded) {
             bet.status = BetStatus.PartiallyFunded;
         }
+        
+        emit BetFunded(address(this), funder, amount, bet.status);
+        
+        if (oldStatus != bet.status) {
+            emit BetStatusChanged(address(this), oldStatus, bet.status, uint64(block.timestamp));
+            }
     }
 
     function resolveBet(address _winner) public notFinalized {
@@ -113,6 +159,7 @@ contract Bet {
         require(block.number < bet.expirationBlock, "Bet has expired");
         
         bet.winner = _winner;
+        BetStatus oldStatus = bet.status;
         bet.status = BetStatus.Resolved;
         
         uint256 winnings = bet.totalWager;
@@ -124,7 +171,8 @@ contract Bet {
             require(wagerCurrency.transfer(_winner, winnings), "Token transfer failed");
         }
         
-        emit BetResolved(_winner, winnings);
+        emit BetResolved(address(this), _winner, winnings, uint64(block.timestamp));
+        emit BetStatusChanged(address(this), oldStatus, bet.status, uint64(block.timestamp));
         _finalizeBet();
     }
 
@@ -132,8 +180,11 @@ contract Bet {
         require(bet.status != BetStatus.Resolved && bet.status != BetStatus.Invalidated, "Bet is not in a state that can expire");
         require(block.number >= bet.expirationBlock, "Bet has not expired yet");
         
+        BetStatus oldStatus = bet.status;
         bet.status = BetStatus.Expired;
-        emit BetExpired();
+        
+        emit BetStatusChanged(address(this), oldStatus, bet.status, uint64(block.timestamp));
+        emit BetInvalidated(address(this), address(this), "Bet expired", uint64(block.timestamp));
         
         _refundBettors();
         _finalizeBet();
@@ -148,9 +199,11 @@ contract Bet {
             require(block.number < bet.expirationBlock, "Bet has expired");
         }
         
+        BetStatus oldStatus = bet.status;
         bet.status = BetStatus.Invalidated;
         
-        emit BetCancelled(msg.sender);
+        emit BetStatusChanged(address(this), oldStatus, bet.status, uint64(block.timestamp));
+        emit BetInvalidated(address(this), msg.sender, "Bet cancelled", uint64(block.timestamp));
         
         _refundBettors();
         _finalizeBet();
@@ -161,9 +214,11 @@ contract Bet {
         require(bet.status == BetStatus.FullyFunded, "Bet is not fully funded.");
         require(block.number < bet.expirationBlock, "Bet has expired");
         
+        BetStatus oldStatus = bet.status;
         bet.status = BetStatus.Invalidated;
         
-        emit BetInvalidated();
+        emit BetStatusChanged(address(this), oldStatus, bet.status, uint64(block.timestamp));
+        emit BetInvalidated(address(this), msg.sender, "Bet invalidated by judge", uint64(block.timestamp));
         
         _refundBettors();
         _finalizeBet();
@@ -203,10 +258,9 @@ contract Bet {
 
     function _finalizeBet() private {
         bet.finalized = true;
-        emit BetFinalized();
     }
 
-    // View functions to easily access bet details
+    // View functions remain unchanged
     function getBetDetails() public view returns (
         address maker,
         address taker,
