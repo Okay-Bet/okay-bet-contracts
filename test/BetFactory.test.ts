@@ -15,7 +15,7 @@ describe("BetFactory Contract", function () {
   let usdcToken: MockERC20;
   const totalWager = ethers.utils.parseUnits("100", 6); // Assuming USDC has 6 decimals
   const wagerRatio = 50; // Equal split
-  const expirationBlocks = 50400; // 1 week
+  const expirationBlocks = 302401; // 1 week
 
   beforeEach(async function () {
     [maker, taker, judge] = await ethers.getSigners();
@@ -174,4 +174,22 @@ describe("BetFactory Contract", function () {
     expect(bet1Details.conditions).to.equal("Test Conditions 1");
     expect(bet2Details.conditions).to.equal("Test Conditions 2");
   });
+
+  it("should not allow creating a bet with too short expiration period", async function () {
+    const shortExpirationBlocks = 302399; // One block less than the minimum
+    await expect(
+      betFactory.createBet(
+        maker.address,
+        taker.address,
+        judge.address,
+        totalWager,
+        wagerRatio,
+        "Test Conditions",
+        shortExpirationBlocks,
+        usdcToken.address
+      )
+    ).to.be.revertedWith("Expiration period too short");
+  });
+  
+
 });

@@ -6,8 +6,12 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract BetFactory {
     Bet[] public bets;
-    uint256 public constant MIN_EXPIRATION_BLOCKS = 50400; // Approximately 1 week
 
+    // Calculate MIN_EXPIRATION_BLOCKS based on 2-second block times
+    // 1 week = 7 days * 24 hours * 60 minutes * 60 seconds = 604,800 seconds
+    // 604,800 seconds / 2 seconds per block = 302,400 blocks
+    uint256 public constant MIN_EXPIRATION_BLOCKS = 302400; // Approximately 1 week on Base
+    
     event BetCreated(address betAddress, address indexed maker, address indexed taker, address indexed judge, uint256 totalWager, uint8 wagerRatio, string conditions, uint256 expirationBlock, address wagerCurrency);
 
     function createBet(

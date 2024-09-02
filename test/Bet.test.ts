@@ -17,7 +17,7 @@ describe("Bet Contract", function () {
   let usdcToken: MockERC20;
   let daiToken: MockERC20;
   const totalWager = ethers.utils.parseUnits("100", 6); // Assuming 6 decimals
-  const expirationBlocks = 50400; // 1 week
+  const expirationBlocks = 302400; // 1 week
 
   beforeEach(async function () {
     [maker, taker, judge] = await ethers.getSigners();
