@@ -16,10 +16,11 @@ contract Bet {
         BetStatus status;
         address winner;
         uint256 expirationBlock;
+        bool finalized;
     }
     
     BetDetails public bet;
-    IERC20 public usdcToken;
+    IERC20 public wagerCurrency;
     mapping(address => uint256) public fundedAmount;
 
     event BetCreated(address indexed maker, address indexed taker, address indexed judge, uint256 totalWager, uint8 wagerRatio, string conditions, uint256 expirationBlock);
@@ -30,6 +31,12 @@ contract Bet {
     event BetCancelled(address indexed canceller);
     event BetExpired();
     event PayoutFailed(address indexed recipient, uint256 amount);
+    event BetFinalized();
+
+    modifier notFinalized() {
+        require(!bet.finalized, "Bet has been finalized");
+        _;
+    }
 
     constructor(
         address _maker,
@@ -38,7 +45,7 @@ contract Bet {
         uint256 _totalWager,
         uint8 _wagerRatio,
         string memory _conditions,
-        address _usdcAddress,
+        address _wagerCurrency,
         uint256 _expirationBlocks
     ) {
         require(_maker != _taker, "Maker and taker must be different addresses");
@@ -54,8 +61,9 @@ contract Bet {
         bet.conditions = _conditions;
         bet.status = BetStatus.Unfunded;
         bet.expirationBlock = block.number + _expirationBlocks;
-        usdcToken = IERC20(_usdcAddress);
-        
+        bet.finalized = false;
+        wagerCurrency = _wagerCurrency == address(0) ? IERC20(address(0)) : IERC20(_wagerCurrency);
+
         emit BetCreated(_maker, _taker, _judge, _totalWager, _wagerRatio, _conditions, bet.expirationBlock);
     }
 
@@ -68,19 +76,26 @@ contract Bet {
         return 0;
     }
 
-    function fundBet(uint256 amount) public {
-        require(msg.sender == bet.maker || msg.sender == bet.taker, "Only the maker or taker can fund the bet.");
+    function fundBet(uint256 amount) public payable notFinalized {
+        require(msg.sender == bet.maker || msg.sender == bet.taker || msg.sender == tx.origin, "Only the maker or taker can fund the bet.");
+        address funder = (msg.sender == bet.maker || msg.sender == bet.taker) ? msg.sender : tx.origin;
+        require(funder == bet.maker || funder == bet.taker, "Only the maker or taker can fund the bet.");
         require(bet.status == BetStatus.Unfunded || bet.status == BetStatus.PartiallyFunded, "Bet is not in a fundable state.");
         require(block.number < bet.expirationBlock, "Bet has expired");
         
-        uint256 expectedAmount = getWagerAmount(msg.sender);
-        require(amount + fundedAmount[msg.sender] <= expectedAmount, "Overfunding not allowed.");
+        uint256 expectedAmount = getWagerAmount(funder);
+        require(amount + fundedAmount[funder] <= expectedAmount, "Overfunding not allowed.");
 
-        require(usdcToken.transferFrom(msg.sender, address(this), amount), "USDC transfer failed");
+        if (address(wagerCurrency) == address(0)) {
+            require(msg.value == amount, "Sent ETH must match the funding amount");
+        } else {
+            require(msg.value == 0, "ETH not accepted for token bets");
+            require(wagerCurrency.transferFrom(msg.sender, address(this), amount), "Token transfer failed");
+        }
         
-        fundedAmount[msg.sender] += amount;
+        fundedAmount[funder] += amount;
         
-        emit BetFunded(msg.sender, amount);
+        emit BetFunded(funder, amount);
 
         if (fundedAmount[bet.maker] == getWagerAmount(bet.maker) && 
             fundedAmount[bet.taker] == getWagerAmount(bet.taker)) {
@@ -91,7 +106,7 @@ contract Bet {
         }
     }
 
-    function resolveBet(address _winner) public {
+    function resolveBet(address _winner) public notFinalized {
         require(msg.sender == bet.judge, "Only the judge can resolve the bet.");
         require(bet.status == BetStatus.FullyFunded, "Bet is not fully funded.");
         require(_winner == bet.maker || _winner == bet.taker, "Invalid winner address.");
@@ -100,27 +115,31 @@ contract Bet {
         bet.winner = _winner;
         bet.status = BetStatus.Resolved;
         
-        bool success = usdcToken.transfer(_winner, bet.totalWager);
+        uint256 winnings = bet.totalWager;
         
-        if (success) {
-            emit BetResolved(_winner, bet.totalWager);
+        if (address(wagerCurrency) == address(0)) {
+            (bool success, ) = _winner.call{value: winnings}("");
+            require(success, "ETH transfer failed");
         } else {
-            emit PayoutFailed(_winner, bet.totalWager);
-            bet.status = BetStatus.FullyFunded; // Revert to fully funded state
+            require(wagerCurrency.transfer(_winner, winnings), "Token transfer failed");
         }
+        
+        emit BetResolved(_winner, winnings);
+        _finalizeBet();
     }
 
-    function checkExpiration() public {
-        require(bet.status == BetStatus.FullyFunded, "Bet is not in a state that can expire");
+    function checkExpiration() public notFinalized {
+        require(bet.status != BetStatus.Resolved && bet.status != BetStatus.Invalidated, "Bet is not in a state that can expire");
         require(block.number >= bet.expirationBlock, "Bet has not expired yet");
         
         bet.status = BetStatus.Expired;
         emit BetExpired();
         
         _refundBettors();
+        _finalizeBet();
     }
 
-    function cancelBet() public {
+    function cancelBet() public notFinalized {
         require(msg.sender == bet.maker || msg.sender == bet.taker || msg.sender == bet.judge, "Only maker, taker, or judge can cancel.");
         require(bet.status != BetStatus.Resolved && bet.status != BetStatus.Invalidated && bet.status != BetStatus.Expired, "Bet cannot be cancelled.");
         
@@ -134,9 +153,10 @@ contract Bet {
         emit BetCancelled(msg.sender);
         
         _refundBettors();
+        _finalizeBet();
     }
 
-    function invalidateBet() public {
+    function invalidateBet() public notFinalized {
         require(msg.sender == bet.judge, "Only the judge can invalidate the bet.");
         require(bet.status == BetStatus.FullyFunded, "Bet is not fully funded.");
         require(block.number < bet.expirationBlock, "Bet has expired");
@@ -146,21 +166,93 @@ contract Bet {
         emit BetInvalidated();
         
         _refundBettors();
+        _finalizeBet();
     }
 
     function _refundBettors() private {
-        // Refund each bettor only the amount they have funded, which may be uneven
-        if (fundedAmount[bet.maker] > 0) {
-            bool success = usdcToken.transfer(bet.maker, fundedAmount[bet.maker]);
-            if (!success) {
-                emit PayoutFailed(bet.maker, fundedAmount[bet.maker]);
+        if (address(wagerCurrency) == address(0)) {
+            if (fundedAmount[bet.maker] > 0) {
+                (bool success, ) = bet.maker.call{value: fundedAmount[bet.maker]}("");
+                if (!success) {
+                    emit PayoutFailed(bet.maker, fundedAmount[bet.maker]);
+                }
+            }
+            if (fundedAmount[bet.taker] > 0) {
+                (bool success, ) = bet.taker.call{value: fundedAmount[bet.taker]}("");
+                if (!success) {
+                    emit PayoutFailed(bet.taker, fundedAmount[bet.taker]);
+                }
+            }
+        } else {
+            if (fundedAmount[bet.maker] > 0) {
+                bool success = wagerCurrency.transfer(bet.maker, fundedAmount[bet.maker]);
+                if (!success) {
+                    emit PayoutFailed(bet.maker, fundedAmount[bet.maker]);
+                }
+            }
+            if (fundedAmount[bet.taker] > 0) {
+                bool success = wagerCurrency.transfer(bet.taker, fundedAmount[bet.taker]);
+                if (!success) {
+                    emit PayoutFailed(bet.taker, fundedAmount[bet.taker]);
+                }
             }
         }
-        if (fundedAmount[bet.taker] > 0) {
-            bool success = usdcToken.transfer(bet.taker, fundedAmount[bet.taker]);
-            if (!success) {
-                emit PayoutFailed(bet.taker, fundedAmount[bet.taker]);
-            }
-        }
+        fundedAmount[bet.maker] = 0;
+        fundedAmount[bet.taker] = 0;
+    }
+
+    function _finalizeBet() private {
+        bet.finalized = true;
+        emit BetFinalized();
+    }
+
+    // View functions to easily access bet details
+    function getBetDetails() public view returns (
+        address maker,
+        address taker,
+        address judge,
+        uint256 totalWager,
+        uint8 wagerRatio,
+        string memory conditions,
+        BetStatus status,
+        address winner,
+        uint256 expirationBlock,
+        bool finalized
+    ) {
+        return (
+            bet.maker,
+            bet.taker,
+            bet.judge,
+            bet.totalWager,
+            bet.wagerRatio,
+            bet.conditions,
+            bet.status,
+            bet.winner,
+            bet.expirationBlock,
+            bet.finalized
+        );
+    }
+
+    function isBetFinalized() public view returns (bool) {
+        return bet.finalized;
+    }
+
+    function getBetWinner() public view returns (address) {
+        require(bet.finalized, "Bet is not finalized yet");
+        return bet.winner;
+    }
+
+    function getBetStatus() public view returns (BetStatus) {
+        return bet.status;
+    }
+
+    // Reject any incoming ETH
+    receive() external payable {
+        revert("Contract does not accept direct ETH transfers");
+    }
+
+    // Reject any incoming ETH sent as a fallback
+    fallback() external payable {
+        revert("Contract does not accept direct ETH transfers");
     }
 }

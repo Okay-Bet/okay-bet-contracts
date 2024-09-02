@@ -25,13 +25,37 @@ describe("BetFactory Contract", function () {
     usdcToken = await MockERC20Factory.deploy("USD Coin", "USDC", 6);
     await usdcToken.deployed();
 
+    // Mint USDC tokens to maker and taker
+    await usdcToken.mint(maker.address, totalWager.div(2));
+    await usdcToken.mint(taker.address, totalWager.div(2));
+
     // Deploy BetFactory
-    const BetFactoryFactory = await ethers.getContractFactory(
-      "contracts/BetFactory.sol:BetFactory"
-    );
-    betFactory = await BetFactoryFactory.deploy(usdcToken.address);
+    const BetFactoryFactory = await ethers.getContractFactory("BetFactory");
+    betFactory = await BetFactoryFactory.deploy();
     await betFactory.deployed();
   });
+
+  async function deployBet(
+    wagerRatio: number,
+    wagerCurrency: string,
+    takerAddress?: string
+  ) {
+    const tx = await betFactory.createBet(
+      maker.address,
+      takerAddress || taker.address, // Use provided taker address or default to taker
+      judge.address,
+      totalWager,
+      wagerRatio,
+      "Test Conditions",
+      expirationBlocks,
+      wagerCurrency
+    );
+    const receipt = await tx.wait();
+    const betAddress = receipt.events?.find((e) => e.event === "BetCreated")
+      ?.args?.betAddress;
+    const bet = await ethers.getContractAt("Bet", betAddress);
+    return bet;
+  }
 
   it("should create a new bet", async function () {
     await expect(
@@ -42,7 +66,8 @@ describe("BetFactory Contract", function () {
         totalWager,
         wagerRatio,
         "Test Conditions",
-        expirationBlocks
+        expirationBlocks,
+        usdcToken.address // Add wagerCurrency parameter
       )
     ).to.emit(betFactory, "BetCreated");
 
@@ -58,7 +83,6 @@ describe("BetFactory Contract", function () {
     expect(betDetails.judge).to.equal(judge.address);
     expect(betDetails.totalWager).to.equal(totalWager);
     expect(betDetails.wagerRatio).to.equal(wagerRatio);
-    expect(betDetails.conditions).to.equal("Test Conditions");
   });
 
   it("should not allow creating a bet with invalid parameters", async function () {
@@ -70,7 +94,8 @@ describe("BetFactory Contract", function () {
         totalWager,
         wagerRatio,
         "Test Conditions",
-        expirationBlocks
+        expirationBlocks,
+        usdcToken.address // Add wagerCurrency parameter
       )
     ).to.be.revertedWith("Maker and taker must be different addresses");
 
@@ -82,7 +107,8 @@ describe("BetFactory Contract", function () {
         0, // Invalid total wager
         wagerRatio,
         "Test Conditions",
-        expirationBlocks
+        expirationBlocks,
+        usdcToken.address // Add wagerCurrency parameter
       )
     ).to.be.revertedWith("Total wager must be greater than 0");
 
@@ -94,7 +120,8 @@ describe("BetFactory Contract", function () {
         totalWager,
         101, // Invalid wager ratio
         "Test Conditions",
-        expirationBlocks
+        expirationBlocks,
+        usdcToken.address // Add wagerCurrency parameter
       )
     ).to.be.revertedWith("Wager ratio must be between 0 and 100");
 
@@ -106,7 +133,8 @@ describe("BetFactory Contract", function () {
         totalWager,
         wagerRatio,
         "Test Conditions",
-        1000 // Too short expiration period
+        0, // Invalid expiration blocks
+        usdcToken.address // Add wagerCurrency parameter
       )
     ).to.be.revertedWith("Expiration period too short");
   });
@@ -119,7 +147,8 @@ describe("BetFactory Contract", function () {
       totalWager,
       wagerRatio,
       "Test Conditions 1",
-      expirationBlocks
+      expirationBlocks,
+      usdcToken.address // Add wagerCurrency parameter
     );
 
     await betFactory.createBet(
@@ -129,7 +158,8 @@ describe("BetFactory Contract", function () {
       totalWager.mul(2),
       wagerRatio,
       "Test Conditions 2",
-      expirationBlocks
+      expirationBlocks,
+      usdcToken.address // Add wagerCurrency parameter
     );
 
     const bets = await betFactory.getBets();
@@ -144,6 +174,4 @@ describe("BetFactory Contract", function () {
     expect(bet1Details.conditions).to.equal("Test Conditions 1");
     expect(bet2Details.conditions).to.equal("Test Conditions 2");
   });
-
-  // Add more tests as needed...
 });

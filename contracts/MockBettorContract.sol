@@ -16,9 +16,23 @@ contract MockBettorContract {
     }
 
     function fundBet(address betAddress, uint256 amount) public {
-        Bet(betAddress).fundBet(amount);
+        Bet(payable(betAddress)).fundBet(amount);
     }
 
     // Function to receive USDC refunds
-    function receiveRefund() external payable {}
+    receive() external payable {}
+
+    // Function to fund bet with ETH
+    function fundBetWithEth(address betAddress, uint256 amount) public payable {
+        require(msg.value == amount, "Sent ETH must match the funding amount");
+        Bet(payable(betAddress)).fundBet{value: amount}(amount);
+    }
+
+    // Function to withdraw any ETH balance
+    function withdrawEth() public {
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No ETH balance to withdraw");
+        (bool success, ) = msg.sender.call{value: balance}("");
+        require(success, "ETH withdrawal failed");
+    }
 }
