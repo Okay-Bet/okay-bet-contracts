@@ -1,4 +1,4 @@
-specVersion: 0.0.4
+specVersion: 0.0.5
 schema:
   file: ./schema.graphql
 dataSources:
@@ -6,7 +6,7 @@ dataSources:
     name: BetFactory
     network: base
     source:
-      address: "0xA32DbbA5427fEE87D3CC6CbF85Cd42A75E2F413C"
+      address: "0x417dEf0b502FeC1D1E187821B6a86920e25239d8"
       abi: BetFactory
       startBlock: 17012753
     mapping:
@@ -15,11 +15,12 @@ dataSources:
       language: wasm/assemblyscript
       entities:
         - Bet
+        - BetCreated
       abis:
         - name: BetFactory
           file: ./abis/BetFactory.json
       eventHandlers:
-        - event: BetCreated(address,address,address,address,uint256,string)
+        - event: BetCreated(indexed address,indexed address,indexed address,address,uint256,uint8,string,uint256,address)
           handler: handleBetCreated
       file: ./src/bet-factory.ts
 templates:
@@ -35,17 +36,16 @@ templates:
       file: ./src/bet.ts
       entities:
         - Bet
+        - FundedAmount
       abis:
         - name: Bet
           file: ./abis/Bet.json
       eventHandlers:
-        - event: BetCancelled(address)
-          handler: handleBetCancelled
-        - event: BetFullyFunded()
-          handler: handleBetFullyFunded
-        - event: BetFunded(address,uint256)
+        - event: BetFunded(indexed address,indexed address,uint256,uint8)
           handler: handleBetFunded
-        - event: BetInvalidated()
-          handler: handleBetInvalidated
-        - event: BetResolved(address)
+        - event: BetStatusChanged(indexed address,indexed uint8,indexed uint8,uint64)
+          handler: handleBetStatusChanged
+        - event: BetResolved(indexed address,indexed address,uint256,uint64)
           handler: handleBetResolved
+        - event: BetInvalidated(indexed address,indexed address,string,uint64)
+          handler: handleBetInvalidated

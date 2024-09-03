@@ -1,37 +1,42 @@
-import { BetCreated as BetCreatedEvent } from "../generated/BetFactory/BetFactory"
-import { BetCreated, Bet } from "../generated/schema"
-import { Bet as BetTemplate } from "../generated/templates"
+import { BetCreated as BetCreatedEvent } from "../generated/BetFactory/BetFactory";
+import { Bet, BetCreated } from "../generated/schema";
+import { Bet as BetTemplate } from "../generated/templates";
+import { BigInt } from "@graphprotocol/graph-ts";
 
 export function handleBetCreated(event: BetCreatedEvent): void {
-  // Create BetCreated entity
-  let betCreatedEntity = new BetCreated(
+  let entity = new BetCreated(
     event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  betCreatedEntity.betAddress = event.params.betAddress
-  betCreatedEntity.better1 = event.params.better1
-  betCreatedEntity.better2 = event.params.better2
-  betCreatedEntity.decider = event.params.decider
-  betCreatedEntity.wager = event.params.wager
-  betCreatedEntity.conditions = event.params.conditions
-  betCreatedEntity.blockNumber = event.block.number
-  betCreatedEntity.blockTimestamp = event.block.timestamp
-  betCreatedEntity.transactionHash = event.transaction.hash
-  betCreatedEntity.save()
+  );
+  entity.betAddress = event.params.betAddress;
+  entity.maker = event.params.maker;
+  entity.taker = event.params.taker;
+  entity.judge = event.params.judge;
+  entity.totalWager = event.params.totalWager;
+  entity.wagerRatio = event.params.wagerRatio;
+  entity.conditions = event.params.conditions;
+  entity.expirationBlock = event.params.expirationBlock;
+  entity.wagerCurrency = event.params.wagerCurrency;
+  entity.blockNumber = event.block.number;
+  entity.blockTimestamp = event.block.timestamp;
+  entity.transactionHash = event.transaction.hash;
+  entity.save();
 
-  // Create Bet entity
-  let betEntity = new Bet(event.params.betAddress.toHexString())
-  betEntity.betAddress = event.params.betAddress
-  betEntity.better1 = event.params.better1
-  betEntity.better2 = event.params.better2
-  betEntity.decider = event.params.decider
-  betEntity.wager = event.params.wager
-  betEntity.conditions = event.params.conditions
-  betEntity.status = 0 // Assuming 0 is the initial status (CREATED)
-  betEntity.createdAt = event.block.timestamp
-  betEntity.updatedAt = event.block.timestamp
-  betEntity.createdTxHash = event.transaction.hash
-  betEntity.save()
+  let bet = new Bet(event.params.betAddress.toHexString());
+  bet.betAddress = event.params.betAddress;
+  bet.maker = event.params.maker;
+  bet.taker = event.params.taker;
+  bet.judge = event.params.judge;
+  bet.totalWager = event.params.totalWager;
+  bet.wagerRatio = event.params.wagerRatio;
+  bet.conditions = event.params.conditions;
+  bet.status = BigInt.fromI32(0); // Unfunded
+  bet.expirationBlock = event.params.expirationBlock;
+  bet.finalized = false;
+  bet.wagerCurrency = event.params.wagerCurrency;
+  bet.createdAt = event.block.timestamp;
+  bet.updatedAt = event.block.timestamp;
+  bet.createdTxHash = event.transaction.hash;
+  bet.save();
 
-  // Create a new Bet template instance
-  BetTemplate.create(event.params.betAddress)
+  BetTemplate.create(event.params.betAddress);
 }

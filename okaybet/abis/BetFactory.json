@@ -3,74 +3,122 @@
     "anonymous": false,
     "inputs": [
       {
-        "indexed": false,
+        "indexed": true,
         "internalType": "address",
         "name": "betAddress",
         "type": "address"
       },
       {
-        "indexed": false,
+        "indexed": true,
         "internalType": "address",
-        "name": "better1",
+        "name": "maker",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "taker",
         "type": "address"
       },
       {
         "indexed": false,
         "internalType": "address",
-        "name": "better2",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "address",
-        "name": "decider",
+        "name": "judge",
         "type": "address"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "wager",
+        "name": "totalWager",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "wagerRatio",
+        "type": "uint8"
       },
       {
         "indexed": false,
         "internalType": "string",
         "name": "conditions",
         "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "expirationBlock",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "wagerCurrency",
+        "type": "address"
       }
     ],
     "name": "BetCreated",
     "type": "event"
   },
   {
-    "inputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "name": "bets",
+    "inputs": [],
+    "name": "MIN_EXPIRATION_BLOCKS",
     "outputs": [
-      { "internalType": "contract Bet", "name": "", "type": "address" }
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
     ],
     "stateMutability": "view",
     "type": "function"
   },
   {
     "inputs": [
-      { "internalType": "address", "name": "_better1", "type": "address" },
-      { "internalType": "address", "name": "_better2", "type": "address" },
-      { "internalType": "address", "name": "_decider", "type": "address" },
-      { "internalType": "uint256", "name": "_wager", "type": "uint256" },
-      { "internalType": "string", "name": "_conditions", "type": "string" }
+      {
+        "internalType": "address",
+        "name": "_maker",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_taker",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_judge",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_totalWager",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint8",
+        "name": "_wagerRatio",
+        "type": "uint8"
+      },
+      {
+        "internalType": "string",
+        "name": "_conditions",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_expirationBlocks",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "_wagerCurrency",
+        "type": "address"
+      }
     ],
     "name": "createBet",
     "outputs": [],
     "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getBets",
-    "outputs": [
-      { "internalType": "contract Bet[]", "name": "", "type": "address[]" }
-    ],
-    "stateMutability": "view",
     "type": "function"
   }
 ]

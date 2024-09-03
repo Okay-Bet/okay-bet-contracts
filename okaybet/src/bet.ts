@@ -1,71 +1,95 @@
-import { 
-    BetCancelled,
-    BetFullyFunded,
-    BetFunded,
-    BetInvalidated,
-    BetResolved
-  } from "../generated/templates/Bet/Bet"
-  import { Bet } from "../generated/schema"
-  
-  export function handleBetCancelled(event: BetCancelled): void {
-    let betId = event.address.toHexString()
-    let bet = Bet.load(betId)
-    
-    if (bet) {
-      bet.status = 5 // Canceled
-      bet.updatedAt = event.block.timestamp
-      bet.canceller = event.params.canceller
-      bet.save()
-    }
+import {
+  BetFunded as BetFundedEvent,
+  BetStatusChanged as BetStatusChangedEvent,
+  BetResolved as BetResolvedEvent,
+  BetInvalidated as BetInvalidatedEvent,
+} from "../generated/templates/Bet/Bet";
+import { Bet, FundedAmount } from "../generated/schema";
+import { BigInt, log } from "@graphprotocol/graph-ts";
+
+export function handleBetFunded(event: BetFundedEvent): void {
+  let betId = event.params.betAddress.toHexString();
+  let bet = Bet.load(betId);
+  if (bet == null) {
+    log.error("Bet not found for BetFunded event. Bet ID: {}", [betId]);
+    return;
   }
-  
-  export function handleBetFullyFunded(event: BetFullyFunded): void {
-    let betId = event.address.toHexString()
-    let bet = Bet.load(betId)
-    
-    if (bet) {
-      bet.status = 3 // Open
-      bet.updatedAt = event.block.timestamp
-      bet.save()
-    }
+
+  let fundedAmountId =
+    event.transaction.hash.toHexString() + "-" + event.logIndex.toString();
+  let fundedAmount = new FundedAmount(fundedAmountId);
+  fundedAmount.bet = bet.id;
+  fundedAmount.bettor = event.params.funder;
+  fundedAmount.amount = event.params.amount;
+  fundedAmount.timestamp = event.block.timestamp;
+  fundedAmount.save();
+
+  bet.status = BigInt.fromI32(event.params.newStatus);
+  bet.updatedAt = event.block.timestamp;
+  bet.save();
+
+  log.info("Bet funded. Bet ID: {}, Funder: {}, Amount: {}", [
+    betId,
+    event.params.funder.toHexString(),
+    event.params.amount.toString(),
+  ]);
+}
+
+export function handleBetStatusChanged(event: BetStatusChangedEvent): void {
+  let betId = event.params.betAddress.toHexString();
+  let bet = Bet.load(betId);
+  if (bet == null) {
+    log.error("Bet not found for BetStatusChanged event. Bet ID: {}", [betId]);
+    return;
   }
-  
-  export function handleBetFunded(event: BetFunded): void {
-    let betId = event.address.toHexString()
-    let bet = Bet.load(betId)
-    
-    if (bet) {
-      if (bet.status == 0) {
-        bet.status = 1 // Partially Funded (Better 1 has funded)
-      } else if (bet.status == 1) {
-        bet.status = 2 // Partially Funded (Better 2 has funded)
-      }
-      bet.updatedAt = event.block.timestamp
-      bet.lastFunder = event.params.funder
-      bet.lastFundedAmount = event.params.amount
-      bet.save()
-    }
+
+  bet.status = BigInt.fromI32(event.params.newStatus);
+  bet.updatedAt = event.block.timestamp;
+  bet.save();
+
+  log.info("Bet status changed. Bet ID: {}, New Status: {}", [
+    betId,
+    event.params.newStatus.toString(),
+  ]);
+}
+
+export function handleBetResolved(event: BetResolvedEvent): void {
+  let betId = event.params.betAddress.toHexString();
+  let bet = Bet.load(betId);
+  if (bet == null) {
+    log.error("Bet not found for BetResolved event. Bet ID: {}", [betId]);
+    return;
   }
-  
-  export function handleBetInvalidated(event: BetInvalidated): void {
-    let betId = event.address.toHexString()
-    let bet = Bet.load(betId)
-    
-    if (bet) {
-      bet.status = 6 // Invalidated
-      bet.updatedAt = event.block.timestamp
-      bet.save()
-    }
+
+  bet.status = BigInt.fromI32(3); // Resolved
+  bet.winner = event.params.winner;
+  bet.finalized = true;
+  bet.updatedAt = event.block.timestamp;
+  bet.save();
+
+  log.info("Bet resolved. Bet ID: {}, Winner: {}, Winning Amount: {}", [
+    betId,
+    event.params.winner.toHexString(),
+    event.params.winningAmount.toString(),
+  ]);
+}
+
+export function handleBetInvalidated(event: BetInvalidatedEvent): void {
+  let betId = event.params.betAddress.toHexString();
+  let bet = Bet.load(betId);
+  if (bet == null) {
+    log.error("Bet not found for BetInvalidated event. Bet ID: {}", [betId]);
+    return;
   }
-  
-  export function handleBetResolved(event: BetResolved): void {
-    let betId = event.address.toHexString()
-    let bet = Bet.load(betId)
-    
-    if (bet) {
-      bet.status = 4 // Resolved
-      bet.winner = event.params.winner
-      bet.updatedAt = event.block.timestamp
-      bet.save()
-    }
-  }
+
+  bet.status = BigInt.fromI32(4); // Invalidated
+  bet.finalized = true;
+  bet.updatedAt = event.block.timestamp;
+  bet.save();
+
+  log.info("Bet invalidated. Bet ID: {}, Invalidator: {}, Reason: {}", [
+    betId,
+    event.params.invalidator.toHexString(),
+    event.params.reason,
+  ]);
+}

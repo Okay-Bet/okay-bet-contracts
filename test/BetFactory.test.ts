@@ -624,5 +624,69 @@ describe("BetFactory Contract", function () {
       const makerBalanceAfter = await mockToken.balanceOf(maker.address);
       expect(makerBalanceAfter.sub(makerBalanceBefore)).to.equal(totalWager);
     });
+
+    it("should create a bet with an empty string in wager conditions", async function () {
+      const emptyConditions = "";
+  
+      const tx = await betFactory.createBet(
+        maker.address,
+        taker.address,
+        judge.address,
+        totalWager,
+        50, // 50-50 split
+        emptyConditions,
+        expirationBlocks,
+        mockToken.address
+      );
+  
+      const receipt = await tx.wait();
+      const event = receipt.events?.find((e) => e.event === "BetCreated");
+      expect(event, "BetCreated event should be emitted").to.not.be.undefined;
+  
+      const betAddress = event?.args?.betAddress;
+      expect(betAddress, "Bet address should be defined").to.not.be.undefined;
+      expect(
+        ethers.utils.isAddress(betAddress),
+        "Bet address should be a valid Ethereum address"
+      ).to.be.true;
+  
+      const bet = await ethers.getContractAt("Bet", betAddress);
+      const betDetails = await bet.getBetDetails();
+  
+      expect(betDetails.conditions).to.equal(emptyConditions);
+    });
+  
+    it("should create a bet with a very long string in wager conditions", async function () {
+      // Create a string that's 1000 characters long
+      const longConditions = "x".repeat(1000);
+  
+      const tx = await betFactory.createBet(
+        maker.address,
+        taker.address,
+        judge.address,
+        totalWager,
+        50, // 50-50 split
+        longConditions,
+        expirationBlocks,
+        mockToken.address
+      );
+  
+      const receipt = await tx.wait();
+      const event = receipt.events?.find((e) => e.event === "BetCreated");
+      expect(event, "BetCreated event should be emitted").to.not.be.undefined;
+  
+      const betAddress = event?.args?.betAddress;
+      expect(betAddress, "Bet address should be defined").to.not.be.undefined;
+      expect(
+        ethers.utils.isAddress(betAddress),
+        "Bet address should be a valid Ethereum address"
+      ).to.be.true;
+  
+      const bet = await ethers.getContractAt("Bet", betAddress);
+      const betDetails = await bet.getBetDetails();
+  
+      expect(betDetails.conditions).to.equal(longConditions);
+      expect(betDetails.conditions.length).to.equal(1000);
+    });
   });
 });
