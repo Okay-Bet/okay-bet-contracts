@@ -451,12 +451,12 @@ describe("BetFactory Contract", function () {
     const maker = await ethers.getSigner(0);
     const taker = await ethers.getSigner(1);
     const judge = await ethers.getSigner(2);
-    
+
     const totalWager = ethers.utils.parseUnits("100", 6); // Assuming 6 decimals for USDC
     const wagerRatio = 75; // 75-25 split
     const conditions = "Test event emission accuracy";
     const expirationBlocks = 302400; // Minimum allowed
-  
+
     const tx = await betFactory.createBet(
       maker.address,
       taker.address,
@@ -467,49 +467,162 @@ describe("BetFactory Contract", function () {
       expirationBlocks,
       usdcToken.address
     );
-  
+
     const receipt = await tx.wait();
     const event = receipt.events?.find((e) => e.event === "BetCreated");
-    
+
     expect(event).to.not.be.undefined;
-    
+
     if (event && event.args) {
       // Check betAddress
       expect(event.args.betAddress).to.be.properAddress;
-      
+
       // Check participants
       expect(event.args.maker).to.equal(maker.address);
       expect(event.args.taker).to.equal(taker.address);
       expect(event.args.judge).to.equal(judge.address);
-      
+
       // Check wager details
       expect(event.args.totalWager).to.equal(totalWager);
       expect(event.args.wagerRatio).to.equal(wagerRatio);
-      
+
       // Check conditions
       expect(event.args.conditions).to.equal(conditions);
-      
+
       // Check expiration block
       const currentBlock = await ethers.provider.getBlockNumber();
-      expect(event.args.expirationBlock).to.equal(currentBlock + expirationBlocks);
-      
+      expect(event.args.expirationBlock).to.equal(
+        currentBlock + expirationBlocks
+      );
+
       // Check wager currency
       expect(event.args.wagerCurrency).to.equal(usdcToken.address);
-  
+
       // Verify the created Bet contract
       const bet = await ethers.getContractAt("Bet", event.args.betAddress);
       const betDetails = await bet.bet();
-  
+
       expect(betDetails.maker).to.equal(maker.address);
       expect(betDetails.taker).to.equal(taker.address);
       expect(betDetails.judge).to.equal(judge.address);
       expect(betDetails.totalWager).to.equal(totalWager);
       expect(betDetails.wagerRatio).to.equal(wagerRatio);
       expect(betDetails.conditions).to.equal(conditions);
-      expect(betDetails.expirationBlock).to.equal(currentBlock + expirationBlocks);
+      expect(betDetails.expirationBlock).to.equal(
+        currentBlock + expirationBlocks
+      );
     } else {
       throw new Error("BetCreated event not emitted");
     }
   });
 
+  describe("BetFactory and Bet with Non-Standard ERC20", function () {
+    let betFactory: BetFactory;
+    let mockToken: MockToken;
+    let maker: SignerWithAddress;
+    let taker: SignerWithAddress;
+    let judge: SignerWithAddress;
+    const totalWager = ethers.utils.parseUnits("100", 9); // 100 tokens with 9 decimals
+    const expirationBlocks = 302400; // 1 week
+
+    beforeEach(async function () {
+      [maker, taker, judge] = await ethers.getSigners();
+
+      // Deploy MockToken
+      const MockTokenFactory = await ethers.getContractFactory("MockToken");
+      mockToken = await MockTokenFactory.deploy("Non-Standard Token", "NST", 9);
+      await mockToken.deployed();
+
+      // Mint tokens to maker and taker
+      await mockToken.mint(maker.address, totalWager.mul(2));
+      await mockToken.mint(taker.address, totalWager.mul(2));
+
+      // Deploy BetFactory
+      const BetFactoryFactory = await ethers.getContractFactory("BetFactory");
+      betFactory = await BetFactoryFactory.deploy();
+      await betFactory.deployed();
+    });
+
+    it("should create a bet with non-standard ERC20 token", async function () {
+      const tx = await betFactory.createBet(
+        maker.address,
+        taker.address,
+        judge.address,
+        totalWager,
+        50, // 50-50 split
+        "Non-standard token test",
+        expirationBlocks,
+        mockToken.address
+      );
+
+      const receipt = await tx.wait();
+      const event = receipt.events?.find((e) => e.event === "BetCreated");
+
+      expect(event, "BetCreated event should be emitted").to.not.be.undefined;
+
+      const betAddress = event?.args?.betAddress;
+
+      expect(betAddress, "Bet address should be defined").to.not.be.undefined;
+      expect(
+        ethers.utils.isAddress(betAddress),
+        "Bet address should be a valid Ethereum address"
+      ).to.be.true;
+
+      const bet = await ethers.getContractAt("Bet", betAddress);
+      const betDetails = await bet.getBetDetails();
+      expect(betDetails.wagerCurrency).to.equal(mockToken.address);
+      expect(
+        betDetails.wagerCurrency,
+        "Wager currency should match mock token address"
+      ).to.equal(mockToken.address);
+      expect(betDetails.maker).to.equal(maker.address);
+      expect(betDetails.taker).to.equal(taker.address);
+      expect(betDetails.judge).to.equal(judge.address);
+      expect(betDetails.wagerRatio).to.equal(50);
+      expect(betDetails.conditions).to.equal("Non-standard token test");
+
+      // Check if the bet contract has the correct balance of mock tokens
+      const betBalance = await mockToken.balanceOf(betAddress);
+      expect(betBalance).to.equal(0, "Newly created bet should have 0 balance");
+    });
+
+    it("should fund and resolve a bet with non-standard ERC20 token", async function () {
+      const tx = await betFactory.createBet(
+        maker.address,
+        taker.address,
+        judge.address,
+        totalWager,
+        50, // 50-50 split
+        "Non-standard token test",
+        expirationBlocks,
+        mockToken.address
+      );
+
+      const receipt = await tx.wait();
+      const betAddress = receipt.events?.find((e) => e.event === "BetCreated")
+        ?.args?.betAddress;
+      const bet = await ethers.getContractAt("Bet", betAddress);
+
+      // Approve and fund the bet
+      await mockToken.connect(maker).approve(betAddress, totalWager.div(2));
+      await mockToken.connect(taker).approve(betAddress, totalWager.div(2));
+      await bet.connect(maker).fundBet(totalWager.div(2));
+      await bet.connect(taker).fundBet(totalWager.div(2));
+
+      const fundedBetDetails = await bet.bet();
+      expect(fundedBetDetails.status).to.equal(2); // FullyFunded status
+
+      // Resolve the bet
+      const makerBalanceBefore = await mockToken.balanceOf(maker.address);
+      await bet.connect(judge).resolveBet(maker.address);
+
+      const resolvedBetDetails = await bet.bet();
+      expect(resolvedBetDetails.status).to.equal(3); // Resolved status
+      expect(resolvedBetDetails.winner).to.equal(maker.address);
+
+      // Check that the winner received the correct amount
+      const makerBalanceAfter = await mockToken.balanceOf(maker.address);
+      expect(makerBalanceAfter.sub(makerBalanceBefore)).to.equal(totalWager);
+    });
+  });
 });

@@ -6,21 +6,21 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract Bet {
     enum BetStatus { Unfunded, PartiallyFunded, FullyFunded, Resolved, Invalidated, Expired }
     
-    struct BetDetails {
-        address maker;
-        address taker;
-        address judge;
-        uint256 totalWager;
-        uint8 wagerRatio; // 0-100, represents maker's share. 50 means equal split.
-        string conditions;
-        BetStatus status;
-        address winner;
-        uint256 expirationBlock;
-        bool finalized;
-    }
+struct BetDetails {
+    address maker;
+    address taker;
+    address judge;
+    uint256 totalWager;
+    uint8 wagerRatio;
+    string conditions;
+    BetStatus status;
+    address winner;
+    uint256 expirationBlock;
+    bool finalized;
+    address wagerCurrency; 
+}
     
     BetDetails public bet;
-    IERC20 public wagerCurrency;
     mapping(address => uint256) public fundedAmount;
 
     event BetCreated(
@@ -94,7 +94,7 @@ contract Bet {
         bet.status = BetStatus.Unfunded;
         bet.expirationBlock = block.number + _expirationBlocks;
         bet.finalized = false;
-        wagerCurrency = _wagerCurrency == address(0) ? IERC20(address(0)) : IERC20(_wagerCurrency);
+        bet.wagerCurrency = _wagerCurrency;
 
         emit BetCreated(
             address(this),
@@ -128,11 +128,11 @@ contract Bet {
         uint256 expectedAmount = getWagerAmount(funder);
         require(amount + fundedAmount[funder] <= expectedAmount, "Overfunding not allowed.");
 
-        if (address(wagerCurrency) == address(0)) {
+        if (bet.wagerCurrency== address(0)) {
             require(msg.value == amount, "Sent ETH must match the funding amount");
         } else {
             require(msg.value == 0, "ETH not accepted for token bets");
-            require(wagerCurrency.transferFrom(msg.sender, address(this), amount), "Token transfer failed");
+            require(IERC20(bet.wagerCurrency).transferFrom(msg.sender, address(this), amount), "Token transfer failed");
         }
         
         fundedAmount[funder] += amount;
@@ -164,11 +164,11 @@ contract Bet {
         
         uint256 winnings = bet.totalWager;
         
-        if (address(wagerCurrency) == address(0)) {
+        if (address(bet.wagerCurrency) == address(0)) {
             (bool success, ) = _winner.call{value: winnings}("");
             require(success, "ETH transfer failed");
         } else {
-            require(wagerCurrency.transfer(_winner, winnings), "Token transfer failed");
+            require(IERC20(bet.wagerCurrency).transfer(_winner, winnings), "Token transfer failed");
         }
         
         emit BetResolved(address(this), _winner, winnings, uint64(block.timestamp));
@@ -225,7 +225,7 @@ contract Bet {
     }
 
     function _refundBettors() private {
-        if (address(wagerCurrency) == address(0)) {
+        if (address(bet.wagerCurrency) == address(0)) {
             if (fundedAmount[bet.maker] > 0) {
                 (bool success, ) = bet.maker.call{value: fundedAmount[bet.maker]}("");
                 if (!success) {
@@ -240,13 +240,13 @@ contract Bet {
             }
         } else {
             if (fundedAmount[bet.maker] > 0) {
-                bool success = wagerCurrency.transfer(bet.maker, fundedAmount[bet.maker]);
+                bool success = IERC20(bet.wagerCurrency).transfer(bet.maker, fundedAmount[bet.maker]);
                 if (!success) {
                     emit PayoutFailed(bet.maker, fundedAmount[bet.maker]);
                 }
             }
             if (fundedAmount[bet.taker] > 0) {
-                bool success = wagerCurrency.transfer(bet.taker, fundedAmount[bet.taker]);
+                bool success = IERC20(bet.wagerCurrency).transfer(bet.taker, fundedAmount[bet.taker]);
                 if (!success) {
                     emit PayoutFailed(bet.taker, fundedAmount[bet.taker]);
                 }
@@ -260,31 +260,32 @@ contract Bet {
         bet.finalized = true;
     }
 
-    // View functions remain unchanged
-    function getBetDetails() public view returns (
-        address maker,
-        address taker,
-        address judge,
-        uint256 totalWager,
-        uint8 wagerRatio,
-        string memory conditions,
-        BetStatus status,
-        address winner,
-        uint256 expirationBlock,
-        bool finalized
-    ) {
-        return (
-            bet.maker,
-            bet.taker,
-            bet.judge,
-            bet.totalWager,
-            bet.wagerRatio,
-            bet.conditions,
-            bet.status,
-            bet.winner,
-            bet.expirationBlock,
-            bet.finalized
-        );
+function getBetDetails() public view returns (
+    address maker,
+    address taker,
+    address judge,
+    uint256 totalWager,
+    uint8 wagerRatio,
+    string memory conditions,
+    BetStatus status,
+    address winner,
+    uint256 expirationBlock,
+    bool finalized,
+    address wagerCurrency 
+) {
+    return (
+        bet.maker,
+        bet.taker,
+        bet.judge,
+        bet.totalWager,
+        bet.wagerRatio,
+        bet.conditions,
+        bet.status,
+        bet.winner,
+        bet.expirationBlock,
+        bet.finalized,
+        bet.wagerCurrency
+    );
     }
 
     function isBetFinalized() public view returns (bool) {
