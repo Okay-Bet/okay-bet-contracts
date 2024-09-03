@@ -79,6 +79,8 @@ describe("Bet Contract", function () {
       expect(betDetails.status).to.equal(0); // Unfunded
     });
 
+
+
     it("should allow funding the bet", async function () {
       await usdcToken.connect(maker).approve(bet.address, totalWager.div(2));
       await usdcToken.connect(taker).approve(bet.address, totalWager.div(2));
