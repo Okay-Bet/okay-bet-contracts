@@ -15,17 +15,16 @@ contract MockBettorContract {
         usdcToken.approve(betAddress, amount);
     }
 
-    function fundBet(address betAddress, uint256 amount) public {
-        Bet(payable(betAddress)).fundBet(amount);
+    function fundBet(address betAddress) public {
+        Bet(payable(betAddress)).fundBet();
     }
 
     // Function to receive USDC refunds
     receive() external payable {}
 
     // Function to fund bet with ETH
-    function fundBetWithEth(address betAddress, uint256 amount) public payable {
-        require(msg.value == amount, "Sent ETH must match the funding amount");
-        Bet(payable(betAddress)).fundBet{value: amount}(amount);
+    function fundBetWithEth(address betAddress) public payable {
+        Bet(payable(betAddress)).fundBet{value: msg.value}();
     }
 
     // Function to withdraw any ETH balance
