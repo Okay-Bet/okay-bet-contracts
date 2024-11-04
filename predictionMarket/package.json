@@ -69,5 +69,8 @@
   "overrides": {
     "ethers": "^5.7.2",
     "hardhat-deploy": "^0.12.1"
+  },
+  "dependencies": {
+    "@stargatefinance/stg-evm-v2": "^1.1.3"
   }
 }

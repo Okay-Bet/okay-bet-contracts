@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC1155 } from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import { IERC1155Receiver } from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
@@ -26,14 +27,13 @@ interface IExchange {
     function fillOrder(Order calldata order) external;
 }
 
-contract PolymarketPositionManager is IERC1155Receiver {
+contract PolymarketPositionManager is IERC1155Receiver, Ownable {
     // State variables
     address public immutable EXCHANGE;
     address public immutable CTF;
     address public immutable USDC;
     address public signer;
 
-    // Domain separator for EIP712
     bytes32 public immutable DOMAIN_SEPARATOR;
 
     // Order type hash for EIP712
@@ -43,8 +43,16 @@ contract PolymarketPositionManager is IERC1155Receiver {
         );
 
     mapping(address => uint256) public nonces;
+    mapping(address => bool) public authorizedTraders;
 
-    constructor(address _exchange, address _ctf, address _usdc, address _signer) {
+    constructor(
+        address _exchange,
+        address _ctf,
+        address _usdc,
+        address _signer,
+        address initialOwner
+    ) Ownable(initialOwner) {
+        // Pass initialOwner to Ownable constructor
         EXCHANGE = _exchange;
         CTF = _ctf;
         USDC = _usdc;
@@ -156,7 +164,7 @@ contract PolymarketPositionManager is IERC1155Receiver {
         return (yesTokenId, noTokenId);
     }
 
-    function setSignerAddress(address _signer) external {
+    function setSignerAddress(address _signer) external onlyOwner {
         signer = _signer;
     }
 
@@ -185,4 +193,18 @@ contract PolymarketPositionManager is IERC1155Receiver {
     ) public virtual override returns (bytes4) {
         return this.onERC1155BatchReceived.selector;
     }
+
+    // Add function to authorize/deauthorize traders
+    function setAuthorizedTrader(address trader, bool authorized) external onlyOwner {
+        authorizedTraders[trader] = authorized;
+        emit AuthorizedTraderSet(trader, authorized);
+    }
+
+    // Transfer position function with authorization check
+    function transferPosition(address to, uint256 tokenId, uint256 amount) external {
+        require(authorizedTraders[msg.sender], "Unauthorized trader");
+        IERC1155(CTF).safeTransferFrom(address(this), to, tokenId, amount, "");
+    }
+
+    event AuthorizedTraderSet(address indexed trader, bool authorized);
 }

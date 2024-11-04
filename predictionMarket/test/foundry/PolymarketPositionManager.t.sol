@@ -104,7 +104,14 @@ contract PolymarketPositionManagerTest is Test {
         ctf = new MockCTF();
         exchange = new MockExchange(address(usdc), address(ctf));
 
-        manager = new PolymarketPositionManager(address(exchange), address(ctf), address(usdc), signer);
+        // Update constructor call to include owner
+        manager = new PolymarketPositionManager(
+            address(exchange),
+            address(ctf),
+            address(usdc),
+            signer,
+            owner // Pass owner as initialOwner
+        );
 
         ctf.prepareCondition(address(0), TEST_QUESTION_ID, 2);
         (yesTokenId, noTokenId) = manager.getMarketTokenIds(TEST_CONDITION_ID);
@@ -128,6 +135,26 @@ contract PolymarketPositionManagerTest is Test {
         vm.startPrank(address(manager));
         ctf.setApprovalForAll(address(exchange), true);
         vm.stopPrank();
+    }
+
+    function test_Ownership() public {
+        assertEq(manager.owner(), owner, "Incorrect owner");
+    }
+
+    function test_AuthorizedTrader() public {
+        address newTrader = address(0x123);
+
+        vm.startPrank(owner);
+        manager.setAuthorizedTrader(newTrader, true);
+        vm.stopPrank();
+
+        assertTrue(manager.authorizedTraders(newTrader), "Trader should be authorized");
+
+        vm.startPrank(owner);
+        manager.setAuthorizedTrader(newTrader, false);
+        vm.stopPrank();
+
+        assertFalse(manager.authorizedTraders(newTrader), "Trader should be unauthorized");
     }
 
     function test_CreateOrder() public {
