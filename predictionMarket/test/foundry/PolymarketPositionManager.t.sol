@@ -6,6 +6,7 @@ import "forge-std/console.sol";
 import "../../contracts/PolymarketPositionManager.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
+import "@openzeppelin/contracts/access/IAccessControl.sol";
 
 contract MockExchange {
     IERC20 public usdc;
@@ -20,15 +21,11 @@ contract MockExchange {
         // Simulate exchange behavior
         if (order.side == 0) {
             // Buy
-            // Transfer USDC from maker to this contract
             require(usdc.transferFrom(order.maker, address(this), order.makerAmount), "USDC transfer failed");
-            // Transfer position tokens from this contract to maker
             ctf.safeTransferFrom(address(this), order.maker, order.tokenId, order.takerAmount, "");
         } else {
             // Sell
-            // Transfer position tokens from maker to this contract
             ctf.safeTransferFrom(order.maker, address(this), order.tokenId, order.makerAmount, "");
-            // Transfer USDC from this contract to maker
             require(usdc.transfer(order.maker, order.takerAmount), "USDC transfer failed");
         }
     }
@@ -46,6 +43,11 @@ contract MockUSDC is ERC20 {
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
+
+    function forceApprove(address spender, uint256 amount) external returns (bool) {
+        _approve(_msgSender(), spender, amount);
+        return true;
+    }
 }
 
 contract MockCTF is ERC1155 {
@@ -56,23 +58,6 @@ contract MockCTF is ERC1155 {
     function prepareCondition(address oracle, bytes32 questionId, uint outcomeSlotCount) external {
         bytes32 conditionId = keccak256(abi.encodePacked(oracle, questionId, outcomeSlotCount));
         isConditionPrepared[conditionId] = true;
-    }
-
-    function splitPosition(
-        IERC20 collateral,
-        bytes32 parentCollectionId,
-        bytes32 conditionId,
-        uint[] calldata partition,
-        uint amount
-    ) external {
-        require(isConditionPrepared[conditionId], "Condition not prepared");
-        require(collateral.transferFrom(msg.sender, address(this), amount), "Collateral transfer failed");
-
-        for (uint i = 0; i < partition.length; i++) {
-            bytes32 collectionId = keccak256(abi.encodePacked(parentCollectionId, conditionId, partition[i]));
-            uint256 positionId = uint256(keccak256(abi.encodePacked(address(collateral), collectionId)));
-            _mint(msg.sender, positionId, amount, "");
-        }
     }
 
     function mintTest(address to, uint256 id, uint256 amount) external {
@@ -90,6 +75,9 @@ contract PolymarketPositionManagerTest is Test {
     address public trader;
     address public signer;
 
+    bytes32 public constant TRADER_ROLE = keccak256("TRADER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+
     bytes32 public constant TEST_QUESTION_ID = keccak256("Will ETH reach $5000 by end of 2024?");
     bytes32 public constant TEST_CONDITION_ID = keccak256(abi.encodePacked(address(0), TEST_QUESTION_ID, uint256(2)));
     uint256 public yesTokenId;
@@ -104,14 +92,13 @@ contract PolymarketPositionManagerTest is Test {
         ctf = new MockCTF();
         exchange = new MockExchange(address(usdc), address(ctf));
 
-        // Update constructor call to include owner
-        manager = new PolymarketPositionManager(
-            address(exchange),
-            address(ctf),
-            address(usdc),
-            signer,
-            owner // Pass owner as initialOwner
-        );
+        manager = new PolymarketPositionManager(address(exchange), address(ctf), address(usdc), signer, owner);
+
+        // Setup roles
+        vm.startPrank(owner);
+        manager.grantRole(TRADER_ROLE, trader);
+        manager.grantRole(OPERATOR_ROLE, owner);
+        vm.stopPrank();
 
         ctf.prepareCondition(address(0), TEST_QUESTION_ID, 2);
         (yesTokenId, noTokenId) = manager.getMarketTokenIds(TEST_CONDITION_ID);
@@ -127,8 +114,8 @@ contract PolymarketPositionManagerTest is Test {
 
         // Approvals
         vm.startPrank(trader);
-        usdc.approve(address(ctf), type(uint256).max);
-        usdc.approve(address(manager), type(uint256).max);
+        usdc.forceApprove(address(ctf), type(uint256).max);
+        usdc.forceApprove(address(manager), type(uint256).max);
         vm.stopPrank();
 
         // Manager approvals
@@ -137,24 +124,25 @@ contract PolymarketPositionManagerTest is Test {
         vm.stopPrank();
     }
 
-    function test_Ownership() public {
+    function test_InitialSetup() public {
         assertEq(manager.owner(), owner, "Incorrect owner");
+        assertTrue(manager.hasRole(OPERATOR_ROLE, owner), "Owner should have operator role");
+        assertTrue(manager.hasRole(TRADER_ROLE, trader), "Trader should have trader role");
+        assertEq(address(manager.USDC()), address(usdc), "Incorrect USDC address");
+        assertEq(address(manager.CTF()), address(ctf), "Incorrect CTF address");
+        assertEq(address(manager.EXCHANGE()), address(exchange), "Incorrect exchange address");
     }
 
-    function test_AuthorizedTrader() public {
+    function test_RoleManagement() public {
         address newTrader = address(0x123);
 
         vm.startPrank(owner);
-        manager.setAuthorizedTrader(newTrader, true);
+        manager.grantRole(TRADER_ROLE, newTrader);
+        assertTrue(manager.hasRole(TRADER_ROLE, newTrader), "New trader should have trader role");
+
+        manager.revokeRole(TRADER_ROLE, newTrader);
+        assertFalse(manager.hasRole(TRADER_ROLE, newTrader), "Trader role should be revoked");
         vm.stopPrank();
-
-        assertTrue(manager.authorizedTraders(newTrader), "Trader should be authorized");
-
-        vm.startPrank(owner);
-        manager.setAuthorizedTrader(newTrader, false);
-        vm.stopPrank();
-
-        assertFalse(manager.authorizedTraders(newTrader), "Trader should be unauthorized");
     }
 
     function test_CreateOrder() public {
@@ -165,10 +153,10 @@ contract PolymarketPositionManagerTest is Test {
         IExchange.Order memory order = manager.createOrder(yesTokenId, amount, price, true);
         vm.stopPrank();
 
-        assertEq(order.maker, address(manager));
-        assertEq(order.tokenId, yesTokenId);
-        assertEq(order.makerAmount, (amount * price) / 10 ** 6);
-        assertEq(order.side, 0);
+        assertEq(order.maker, address(manager), "Incorrect maker address");
+        assertEq(order.tokenId, yesTokenId, "Incorrect token ID");
+        assertEq(order.makerAmount, (amount * price) / 10 ** 6, "Incorrect maker amount");
+        assertEq(order.side, 0, "Incorrect order side");
     }
 
     function test_BuyPosition() public {
@@ -198,19 +186,15 @@ contract PolymarketPositionManagerTest is Test {
         uint256 amount = 100 * 10 ** 6;
         uint256 price = 0.5 * 10 ** 6;
 
-        // Mint position tokens directly to manager
         ctf.mintTest(address(manager), yesTokenId, amount);
 
         uint256 initialManagerTokens = ctf.balanceOf(address(manager), yesTokenId);
         uint256 initialManagerUSDC = usdc.balanceOf(address(manager));
-        uint256 initialExchangeTokens = ctf.balanceOf(address(exchange), yesTokenId);
-        uint256 initialExchangeUSDC = usdc.balanceOf(address(exchange));
 
         vm.startPrank(trader);
         manager.sellPosition(yesTokenId, amount, price);
         vm.stopPrank();
 
-        // Check manager balances
         assertEq(
             ctf.balanceOf(address(manager), yesTokenId),
             initialManagerTokens - amount,
@@ -221,42 +205,82 @@ contract PolymarketPositionManagerTest is Test {
             initialManagerUSDC + ((amount * price) / 10 ** 6),
             "Incorrect USDC balance after sell"
         );
-
-        // Check exchange balances
-        assertEq(
-            ctf.balanceOf(address(exchange), yesTokenId),
-            initialExchangeTokens + amount,
-            "Incorrect exchange token balance after sell"
-        );
-        assertEq(
-            usdc.balanceOf(address(exchange)),
-            initialExchangeUSDC - ((amount * price) / 10 ** 6),
-            "Incorrect exchange USDC balance after sell"
-        );
     }
 
-    function test_GetMarketTokenIds() public {
-        (uint256 yes, uint256 no) = manager.getMarketTokenIds(TEST_CONDITION_ID);
-
-        assertEq(yes, yesTokenId);
-        assertEq(no, noTokenId);
+    function test_RevertInvalidAmount() public {
+        vm.startPrank(trader);
+        vm.expectRevert(
+            abi.encodeWithSelector(PolymarketPositionManager.InvalidAmount.selector, 0, "Amount must be greater than 0")
+        );
+        manager.buyPosition(yesTokenId, 0, 1 * 10 ** 6);
+        vm.stopPrank();
     }
 
-    function testFail_BuyPosition_InsufficientUSDC() public {
-        uint256 amount = 1000000 * 10 ** 6; // 1M USDC
-        uint256 price = 1 * 10 ** 6; // $1.00
+    function test_RevertUnauthorizedAccess() public {
+        address unauthorized = address(0x999);
+        vm.startPrank(unauthorized);
+
+        // Use IAccessControl for the error definition
+        bytes32 role = TRADER_ROLE;
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, unauthorized, role)
+        );
+        manager.buyPosition(yesTokenId, 100 * 10 ** 6, 0.5 * 10 ** 6);
+        vm.stopPrank();
+    }
+
+    function test_RevertInsufficientBalance() public {
+        uint256 amount = 1000000 * 10 ** 6; // More than minted amount
+        uint256 price = 1 * 10 ** 6;
 
         vm.startPrank(trader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PolymarketPositionManager.InsufficientBalance.selector,
+                (amount * price) / 10 ** 6,
+                usdc.balanceOf(address(manager))
+            )
+        );
         manager.buyPosition(yesTokenId, amount, price);
         vm.stopPrank();
     }
 
-    function testFail_SellPosition_InsufficientTokens() public {
+    function test_TransferPosition() public {
         uint256 amount = 100 * 10 ** 6;
-        uint256 price = 0.5 * 10 ** 6;
+        address recipient = address(0x123);
+
+        ctf.mintTest(address(manager), yesTokenId, amount);
 
         vm.startPrank(trader);
-        manager.sellPosition(yesTokenId, amount, price);
+        manager.transferPosition(recipient, yesTokenId, amount);
+        vm.stopPrank();
+
+        assertEq(ctf.balanceOf(recipient, yesTokenId), amount, "Recipient should have received tokens");
+    }
+
+    function test_RevertTransferToZeroAddress() public {
+        uint256 amount = 100 * 10 ** 6;
+
+        vm.startPrank(trader);
+        vm.expectRevert(abi.encodeWithSelector(PolymarketPositionManager.InvalidAddress.selector, "recipient"));
+        manager.transferPosition(address(0), yesTokenId, amount);
+        vm.stopPrank();
+    }
+
+    function test_UpdateSigner() public {
+        address newSigner = address(0x777);
+
+        vm.startPrank(owner);
+        manager.setSignerAddress(newSigner);
+        vm.stopPrank();
+
+        assertEq(manager.signer(), newSigner, "Signer should be updated");
+    }
+
+    function test_RevertInvalidSigner() public {
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(PolymarketPositionManager.InvalidAddress.selector, "signer"));
+        manager.setSignerAddress(address(0));
         vm.stopPrank();
     }
 

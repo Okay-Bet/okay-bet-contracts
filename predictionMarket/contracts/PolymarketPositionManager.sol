@@ -6,6 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IERC1155 } from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import { IERC1155Receiver } from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 
 interface IExchange {
     struct Order {
@@ -27,7 +28,15 @@ interface IExchange {
     function fillOrder(Order calldata order) external;
 }
 
-contract PolymarketPositionManager is IERC1155Receiver, Ownable {
+contract PolymarketPositionManager is IERC1155Receiver, Ownable, AccessControl {
+    // Custom errors
+    error InsufficientBalance(uint256 required, uint256 available);
+    error InvalidOrder(bytes32 orderHash, string reason);
+    error UnauthorizedAccess(address caller, bytes32 requiredRole);
+    error InvalidAddress(string parameter);
+    error OrderExpired(uint256 expiration, uint256 currentTime);
+    error InvalidAmount(uint256 amount, string reason);
+
     // State variables
     address public immutable EXCHANGE;
     address public immutable CTF;
@@ -36,6 +45,10 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
 
     bytes32 public immutable DOMAIN_SEPARATOR;
 
+    // Role definitions
+    bytes32 public constant TRADER_ROLE = keccak256("TRADER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+
     // Order type hash for EIP712
     bytes32 public constant ORDER_TYPEHASH =
         keccak256(
@@ -43,7 +56,28 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
         );
 
     mapping(address => uint256) public nonces;
-    mapping(address => bool) public authorizedTraders;
+
+    // Events
+    event OrderCreated(
+        bytes32 indexed orderHash,
+        address indexed maker,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 price,
+        bool isBuy
+    );
+
+    event OrderExecuted(
+        bytes32 indexed orderHash,
+        address indexed maker,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 price,
+        bool isBuy
+    );
+
+    event SignerUpdated(address indexed oldSigner, address indexed newSigner);
+    event AuthorizedTraderSet(address indexed trader, bool authorized);
 
     constructor(
         address _exchange,
@@ -52,7 +86,11 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
         address _signer,
         address initialOwner
     ) Ownable(initialOwner) {
-        // Pass initialOwner to Ownable constructor
+        if (_exchange == address(0)) revert InvalidAddress("exchange");
+        if (_ctf == address(0)) revert InvalidAddress("ctf");
+        if (_usdc == address(0)) revert InvalidAddress("usdc");
+        if (_signer == address(0)) revert InvalidAddress("signer");
+
         EXCHANGE = _exchange;
         CTF = _ctf;
         USDC = _usdc;
@@ -68,6 +106,10 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
             )
         );
 
+        // Setup initial roles
+        _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+        _grantRole(OPERATOR_ROLE, initialOwner);
+
         // Approve Exchange contract to spend tokens
         IERC20(USDC).approve(EXCHANGE, type(uint256).max);
     }
@@ -78,7 +120,11 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
         uint256 price,
         bool isBuy
     ) public returns (IExchange.Order memory) {
+        if (amount == 0) revert InvalidAmount(amount, "Amount must be greater than 0");
+        if (price == 0) revert InvalidAmount(price, "Price must be greater than 0");
+
         uint256 salt = uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender)));
+        uint256 expiration = block.timestamp + 1 hours;
 
         IExchange.Order memory order = IExchange.Order({
             salt: salt,
@@ -88,7 +134,7 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
             tokenId: tokenId,
             makerAmount: isBuy ? (amount * price) / 1e6 : amount,
             takerAmount: isBuy ? amount : (amount * price) / 1e6,
-            expiration: block.timestamp + 1 hours,
+            expiration: expiration,
             nonce: nonces[msg.sender]++,
             feeRateBps: 0,
             side: isBuy ? 0 : 1,
@@ -98,6 +144,8 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
 
         bytes32 orderHash = getOrderHash(order);
         order.signature = signOrder(orderHash);
+
+        emit OrderCreated(orderHash, msg.sender, tokenId, amount, price, isBuy);
 
         return order;
     }
@@ -129,27 +177,38 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
             );
     }
 
-    // For testing, we'll use a simple signing mechanism
     function signOrder(bytes32 orderHash) internal view returns (bytes memory) {
         // In production this would use proper signatures
         // For testing, we'll just return a mock signature
         return abi.encodePacked(orderHash, signer);
     }
 
-    function buyPosition(uint256 tokenId, uint256 amount, uint256 maxPrice) external {
+    function buyPosition(uint256 tokenId, uint256 amount, uint256 maxPrice) external onlyRole(TRADER_ROLE) {
         IExchange.Order memory order = createOrder(tokenId, amount, maxPrice, true);
 
-        require(IERC20(USDC).balanceOf(address(this)) >= order.makerAmount, "Insufficient USDC");
+        uint256 balance = IERC20(USDC).balanceOf(address(this));
+        if (balance < order.makerAmount) {
+            revert InsufficientBalance({ required: order.makerAmount, available: balance });
+        }
 
+        bytes32 orderHash = getOrderHash(order);
         IExchange(EXCHANGE).fillOrder(order);
+
+        emit OrderExecuted(orderHash, msg.sender, tokenId, amount, maxPrice, true);
     }
 
-    function sellPosition(uint256 tokenId, uint256 amount, uint256 minPrice) external {
+    function sellPosition(uint256 tokenId, uint256 amount, uint256 minPrice) external onlyRole(TRADER_ROLE) {
         IExchange.Order memory order = createOrder(tokenId, amount, minPrice, false);
 
-        require(IERC1155(CTF).balanceOf(address(this), tokenId) >= amount, "Insufficient position tokens");
+        uint256 balance = IERC1155(CTF).balanceOf(address(this), tokenId);
+        if (balance < amount) {
+            revert InsufficientBalance({ required: amount, available: balance });
+        }
 
+        bytes32 orderHash = getOrderHash(order);
         IExchange(EXCHANGE).fillOrder(order);
+
+        emit OrderExecuted(orderHash, msg.sender, tokenId, amount, minPrice, false);
     }
 
     function getMarketTokenIds(bytes32 conditionId) public view returns (uint256, uint256) {
@@ -165,12 +224,25 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
     }
 
     function setSignerAddress(address _signer) external onlyOwner {
+        if (_signer == address(0)) revert InvalidAddress("signer");
+        address oldSigner = signer;
         signer = _signer;
+        emit SignerUpdated(oldSigner, _signer);
+    }
+
+    function transferPosition(address to, uint256 tokenId, uint256 amount) external onlyRole(TRADER_ROLE) {
+        if (to == address(0)) revert InvalidAddress("recipient");
+        if (amount == 0) revert InvalidAmount(amount, "Amount must be greater than 0");
+
+        IERC1155(CTF).safeTransferFrom(address(this), to, tokenId, amount, "");
     }
 
     // ERC165 Implementation
-    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
-        return interfaceId == type(IERC1155Receiver).interfaceId || interfaceId == type(IERC165).interfaceId;
+    function supportsInterface(bytes4 interfaceId) public view virtual override(AccessControl, IERC165) returns (bool) {
+        return
+            interfaceId == type(IERC1155Receiver).interfaceId ||
+            interfaceId == type(IERC165).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 
     // ERC1155Receiver Implementation
@@ -193,18 +265,4 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable {
     ) public virtual override returns (bytes4) {
         return this.onERC1155BatchReceived.selector;
     }
-
-    // Add function to authorize/deauthorize traders
-    function setAuthorizedTrader(address trader, bool authorized) external onlyOwner {
-        authorizedTraders[trader] = authorized;
-        emit AuthorizedTraderSet(trader, authorized);
-    }
-
-    // Transfer position function with authorization check
-    function transferPosition(address to, uint256 tokenId, uint256 amount) external {
-        require(authorizedTraders[msg.sender], "Unauthorized trader");
-        IERC1155(CTF).safeTransferFrom(address(this), to, tokenId, amount, "");
-    }
-
-    event AuthorizedTraderSet(address indexed trader, bool authorized);
 }

@@ -71,6 +71,7 @@
     "hardhat-deploy": "^0.12.1"
   },
   "dependencies": {
+    "@layerzerolabs/lz-evm-oapp-v2": "^3.0.11",
     "@stargatefinance/stg-evm-v2": "^1.1.3"
   }
 }

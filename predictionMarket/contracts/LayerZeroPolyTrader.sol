@@ -11,14 +11,27 @@ import { PolymarketPositionManager } from "./PolymarketPositionManager.sol";
 contract LayerZeroPolyTrader is Ownable {
     using SafeERC20 for IERC20;
 
+    // Custom errors
+    error InvalidAddress(string parameter);
+    error InvalidAmount(uint256 amount, string reason);
+    error InsufficientNativeFee(uint256 required, uint256 provided);
+    error CrossChainOperationFailed(string reason);
+    error UnauthorizedCaller(address caller, address expected);
+    error InvalidToken(address token, address expected);
+    error RefundFailed();
+
     // State variables
     PolymarketPositionManager public positionManager;
     IStargate public stargate;
     IERC20 public usdc;
     uint32 public dstEid;
 
+    // Mapping to track processed messages
+    mapping(uint32 => mapping(uint64 => bool)) public processedMessages;
+
     // Events
     event OrderSent(
+        bytes32 indexed messageHash,
         address indexed trader,
         uint256 tokenId,
         uint256 amount,
@@ -27,7 +40,17 @@ contract LayerZeroPolyTrader is Ownable {
         bool isBuy
     );
 
-    event OrderExecuted(address indexed trader, uint256 tokenId, uint256 amount, uint256 price, bool isBuy);
+    event OrderExecuted(
+        bytes32 indexed messageHash,
+        address indexed trader,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 price,
+        bool isBuy
+    );
+
+    event DestinationEndpointUpdated(uint32 oldDstEid, uint32 newDstEid);
+    event StargateApprovalUpdated(uint256 amount);
 
     constructor(
         address _positionManager,
@@ -36,9 +59,9 @@ contract LayerZeroPolyTrader is Ownable {
         uint32 _dstEid,
         address initialOwner
     ) Ownable(initialOwner) {
-        require(_positionManager != address(0), "Invalid position manager");
-        require(_stargate != address(0), "Invalid stargate");
-        require(_usdc != address(0), "Invalid USDC");
+        if (_positionManager == address(0)) revert InvalidAddress("position manager");
+        if (_stargate == address(0)) revert InvalidAddress("stargate");
+        if (_usdc == address(0)) revert InvalidAddress("usdc");
 
         positionManager = PolymarketPositionManager(_positionManager);
         stargate = IStargate(_stargate);
@@ -47,32 +70,23 @@ contract LayerZeroPolyTrader is Ownable {
 
         // Approve Stargate to spend USDC
         usdc.forceApprove(address(stargate), type(uint256).max);
+        emit StargateApprovalUpdated(type(uint256).max);
     }
 
     function sendBuyOrder(uint256 tokenId, uint256 amount, uint256 maxPrice, bytes calldata _options) external payable {
-        // Calculate USDC amount needed with precision
         uint256 usdcAmount = (amount * maxPrice) / 1e6;
-        require(usdcAmount > 0, "Invalid USDC amount");
+        if (usdcAmount == 0) revert InvalidAmount(usdcAmount, "USDC amount must be greater than 0");
 
-        // Transfer USDC from user
         usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
 
-        // Check and refresh approval if needed
         uint256 currentAllowance = usdc.allowance(address(this), address(stargate));
         if (currentAllowance < usdcAmount) {
             usdc.forceApprove(address(stargate), type(uint256).max);
+            emit StargateApprovalUpdated(type(uint256).max);
         }
 
-        // Prepare the compose message for destination chain actions
-        bytes memory composeMsg = abi.encode(
-            msg.sender, // trader address
-            tokenId, // position token ID
-            amount, // position amount
-            maxPrice, // max price per token
-            true // isBuy flag
-        );
+        bytes memory composeMsg = abi.encode(msg.sender, tokenId, amount, maxPrice, true);
 
-        // Prepare SendParam for Stargate
         SendParam memory sendParam = SendParam({
             dstEid: dstEid,
             to: addressToBytes32(address(this)),
@@ -83,38 +97,51 @@ contract LayerZeroPolyTrader is Ownable {
             oftCmd: ""
         });
 
-        // Get messaging fee quote
         MessagingFee memory messagingFee = stargate.quoteSend(sendParam, false);
-        require(msg.value >= messagingFee.nativeFee, "Insufficient native token provided");
-
-        // Send tokens via Stargate
-        try stargate.sendToken{ value: messagingFee.nativeFee }(sendParam, messagingFee, msg.sender) {
-            emit OrderSent(msg.sender, tokenId, amount, maxPrice, usdcAmount, true);
-        } catch {
-            // If the send fails, refund the user's USDC
-            usdc.safeTransfer(msg.sender, usdcAmount);
-            revert("Stargate sendToken failed");
+        if (msg.value < messagingFee.nativeFee) {
+            revert InsufficientNativeFee({ required: messagingFee.nativeFee, provided: msg.value });
         }
 
-        // Refund excess native token
-        if (msg.value > messagingFee.nativeFee) {
-            (bool success, ) = msg.sender.call{ value: msg.value - messagingFee.nativeFee }("");
-            require(success, "Native token refund failed");
+        bytes32 messageHash = keccak256(composeMsg);
+
+        try stargate.sendToken{ value: messagingFee.nativeFee }(sendParam, messagingFee, msg.sender) {
+            emit OrderSent(messageHash, msg.sender, tokenId, amount, maxPrice, usdcAmount, true);
+        } catch {
+            usdc.safeTransfer(msg.sender, usdcAmount);
+            revert CrossChainOperationFailed("Stargate sendToken failed");
+        }
+
+        uint256 refundAmount = msg.value - messagingFee.nativeFee;
+        if (refundAmount > 0) {
+            (bool success, ) = msg.sender.call{ value: refundAmount }("");
+            if (!success) revert RefundFailed();
         }
     }
 
     function sgReceive(
-        uint16 /* _srcChainId */,
-        bytes memory /* _srcAddress */,
-        uint256 /* _nonce */,
+        uint16 _srcChainId,
+        bytes memory _srcAddress,
+        uint256 _nonce,
         address _token,
         uint256 amountLD,
         bytes memory _payload
     ) external {
-        require(msg.sender == address(stargate), "Only Stargate");
-        require(_token == address(usdc), "Only USDC accepted");
+        // Removed nonReentrant modifier
+        // Validate caller and token
+        if (msg.sender != address(stargate)) {
+            revert UnauthorizedCaller(msg.sender, address(stargate));
+        }
+        if (_token != address(usdc)) {
+            revert InvalidToken(_token, address(usdc));
+        }
 
-        // Decode the order details
+        // Prevent duplicate messages
+        if (processedMessages[uint32(_srcChainId)][uint64(_nonce)]) {
+            revert CrossChainOperationFailed("Message already processed");
+        }
+        processedMessages[uint32(_srcChainId)][uint64(_nonce)] = true;
+
+        // Rest of the function remains the same...
         (address trader, uint256 tokenId, uint256 amount, uint256 price, bool isBuy) = abi.decode(
             _payload,
             (address, uint256, uint256, uint256, bool)
@@ -125,17 +152,20 @@ contract LayerZeroPolyTrader is Ownable {
             uint256 currentAllowance = usdc.allowance(address(this), address(positionManager));
             if (currentAllowance < amountLD) {
                 usdc.forceApprove(address(positionManager), type(uint256).max);
+                emit StargateApprovalUpdated(type(uint256).max);
             }
+
+            bytes32 messageHash = keccak256(_payload);
 
             // Execute buy order on Polymarket
             try positionManager.buyPosition(tokenId, amount, price) {
                 // Transfer position tokens to trader
                 positionManager.transferPosition(trader, tokenId, amount);
-                emit OrderExecuted(trader, tokenId, amount, price, isBuy);
+                emit OrderExecuted(messageHash, trader, tokenId, amount, price, isBuy);
             } catch Error(string memory reason) {
                 // If the buy fails, refund the USDC to the trader
                 usdc.safeTransfer(trader, amountLD);
-                revert(string(abi.encodePacked("Buy position failed: ", reason)));
+                revert CrossChainOperationFailed(string(abi.encodePacked("Buy position failed: ", reason)));
             }
         }
     }
@@ -146,11 +176,14 @@ contract LayerZeroPolyTrader is Ownable {
 
     // Admin functions
     function setDestinationEndpoint(uint32 _dstEid) external onlyOwner {
+        uint32 oldDstEid = dstEid;
         dstEid = _dstEid;
+        emit DestinationEndpointUpdated(oldDstEid, _dstEid);
     }
 
     function updateStargateApproval() external onlyOwner {
         usdc.forceApprove(address(stargate), type(uint256).max);
+        emit StargateApprovalUpdated(type(uint256).max);
     }
 
     // Function to receive ETH when excess is refunded
