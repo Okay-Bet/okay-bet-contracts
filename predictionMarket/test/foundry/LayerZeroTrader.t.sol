@@ -133,6 +133,7 @@ contract LayerZeroPolyTraderTest is TestHelperOz5 {
 
         uint256 usdcAmount = (amount * price) / 1e6;
         uint256 initialUserUSDC = usdc.balanceOf(userA);
+        uint256 initialStargateUSDC = usdc.balanceOf(address(stargateOptimism));
 
         console.log("Initial setup complete. Starting balances:");
         logBalances();
@@ -146,7 +147,11 @@ contract LayerZeroPolyTraderTest is TestHelperOz5 {
 
         // Verify the initial state after order sending
         assertEq(usdc.balanceOf(userA), initialUserUSDC - usdcAmount, "User USDC balance incorrect");
-        assertEq(usdc.balanceOf(address(stargateOptimism)), usdcAmount, "Stargate USDC balance incorrect");
+        assertEq(
+            usdc.balanceOf(address(stargateOptimism)),
+            initialStargateUSDC + usdcAmount,
+            "Stargate USDC balance incorrect"
+        );
 
         // Prepare cross-chain message simulation
         bytes memory payload = abi.encode(
