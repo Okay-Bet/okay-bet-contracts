@@ -3,11 +3,9 @@ pragma solidity ^0.8.22;
 
 import { LayerZeroPolyTrader } from "../../contracts/LayerZeroPolyTrader.sol";
 import { PolymarketPositionManager } from "../../contracts/PolymarketPositionManager.sol";
-import { OAppOptionsType3 } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OAppOptionsType3.sol";
-import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "forge-std/console.sol";
-import { TestHelperOz5 } from "@layerzerolabs/test-devtools-evm-foundry/contracts/TestHelperOz5.sol";
+import "forge-std/Test.sol";
 
 // Import mocks
 import { MockUSDC } from "./mocks/MockUSDC.sol";
@@ -15,77 +13,50 @@ import { MockCTF } from "./mocks/MockCTF.sol";
 import { MockExchange } from "./mocks/MockExchange.sol";
 import { MockStargate } from "./mocks/MockStargate.sol";
 
-contract LayerZeroPolyTraderTest is TestHelperOz5 {
-    // Chain IDs
-    uint32 private constant OPTIMISM_EID = 40232;
-    uint32 private constant POLYGON_EID = 40161;
-
-    // Contracts
-    LayerZeroPolyTrader private optimismTrader;
-    LayerZeroPolyTrader private polygonTrader;
-    PolymarketPositionManager private positionManager;
-    MockUSDC private usdc;
-    MockCTF private ctf;
-    MockExchange private exchange;
-    MockStargate private stargateOptimism;
-    MockStargate private stargatePolygon;
+contract LayerZeroPolyTraderTest is Test {
+    LayerZeroPolyTrader public trader;
+    PolymarketPositionManager public positionManager;
+    MockUSDC public usdc;
+    MockCTF public ctf;
+    MockExchange public exchange;
+    MockStargate public stargate;
 
     // Roles
-    bytes32 private constant TRADER_ROLE = keccak256("TRADER_ROLE");
-    bytes32 private constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant TRADER_ROLE = keccak256("TRADER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
     // Test addresses
-    address private userA = address(0x1);
-    address private userB = address(0x2);
-    address private signer = address(0x3);
-    address private owner = address(0x4);
+    address public owner;
+    address public user;
+    address public signer;
+    uint16 public constant SRC_CHAIN_ID = 10; // Optimism chain ID
 
     // Test data
     bytes32 public constant TEST_QUESTION_ID = keccak256("Will ETH reach $5000 by end of 2024?");
     bytes32 public constant TEST_CONDITION_ID = keccak256(abi.encodePacked(address(0), TEST_QUESTION_ID, uint256(2)));
     uint256 public yesTokenId;
     uint256 public noTokenId;
+    uint64 public constant TEST_NONCE = 1;
 
-    function setUp() public virtual override {
-        super.setUp();
-
-        // Setup basic accounts
-        vm.deal(userA, 1000 ether);
-        vm.deal(userB, 1000 ether);
-        vm.deal(owner, 1000 ether);
+    function setUp() public {
+        owner = address(this);
+        user = address(0xB0B);
+        signer = address(0xB0B1);
 
         // Deploy mock contracts
         usdc = new MockUSDC();
         ctf = new MockCTF();
         exchange = new MockExchange(address(usdc), address(ctf));
-        stargateOptimism = new MockStargate(address(usdc));
-        stargatePolygon = new MockStargate(address(usdc));
+        stargate = new MockStargate(address(usdc));
 
-        // Deploy position manager with owner
+        // Deploy main contracts
         positionManager = new PolymarketPositionManager(address(exchange), address(ctf), address(usdc), signer, owner);
 
-        // Deploy traders with Stargate integration
-        optimismTrader = new LayerZeroPolyTrader(
-            address(positionManager),
-            address(stargateOptimism),
-            address(usdc),
-            POLYGON_EID,
-            owner
-        );
+        trader = new LayerZeroPolyTrader(address(positionManager), address(stargate), address(usdc), owner);
 
-        polygonTrader = new LayerZeroPolyTrader(
-            address(positionManager),
-            address(stargatePolygon),
-            address(usdc),
-            OPTIMISM_EID,
-            owner
-        );
-
-        // Setup roles for traders
-        vm.startPrank(owner);
-        positionManager.grantRole(TRADER_ROLE, address(optimismTrader));
-        positionManager.grantRole(TRADER_ROLE, address(polygonTrader));
-        vm.stopPrank();
+        // Setup roles
+        positionManager.grantRole(TRADER_ROLE, address(trader));
+        positionManager.grantRole(OPERATOR_ROLE, owner);
 
         // Setup test market
         ctf.prepareCondition(address(0), TEST_QUESTION_ID, 2);
@@ -97,141 +68,124 @@ contract LayerZeroPolyTraderTest is TestHelperOz5 {
 
     function setupBalancesAndApprovals() internal {
         // Mint USDC
-        usdc.mint(userA, 10000 * 10 ** 6);
+        usdc.mint(user, 10000 * 10 ** 6);
         usdc.mint(address(exchange), 10000 * 10 ** 6);
         usdc.mint(address(positionManager), 10000 * 10 ** 6);
-        usdc.mint(address(stargateOptimism), 10000 * 10 ** 6);
-        usdc.mint(address(stargatePolygon), 10000 * 10 ** 6);
-        usdc.mint(address(polygonTrader), 10000 * 10 ** 6);
-        usdc.mint(address(optimismTrader), 10000 * 10 ** 6);
+        usdc.mint(address(stargate), 10000 * 10 ** 6);
+        usdc.mint(address(trader), 10000 * 10 ** 6);
 
         // Mint position tokens to exchange
         ctf.mintTest(address(exchange), yesTokenId, 10000 * 10 ** 6);
         ctf.mintTest(address(exchange), noTokenId, 10000 * 10 ** 6);
 
         // Setup approvals
-        vm.startPrank(userA);
-        usdc.approve(address(optimismTrader), type(uint256).max);
-        vm.stopPrank();
+        vm.prank(user);
+        usdc.approve(address(stargate), type(uint256).max);
 
         vm.startPrank(address(positionManager));
         ctf.setApprovalForAll(address(exchange), true);
         usdc.approve(address(exchange), type(uint256).max);
         vm.stopPrank();
 
-        vm.startPrank(address(polygonTrader));
+        vm.prank(address(trader));
         usdc.approve(address(positionManager), type(uint256).max);
-        vm.stopPrank();
     }
 
-    function test_SendBuyOrder() public {
+    function test_sgReceive_BuyPosition() public {
         uint256 amount = 100 * 10 ** 6;
         uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
-
         uint256 usdcAmount = (amount * price) / 1e6;
-        uint256 initialUserUSDC = usdc.balanceOf(userA);
-        uint256 initialStargateUSDC = usdc.balanceOf(address(stargateOptimism));
 
-        vm.startPrank(userA);
-        optimismTrader.sendBuyOrder{ value: 0.01 ether }(yesTokenId, amount, price, options);
+        // Need to ensure there's enough USDC in the trader contract
+        usdc.mint(address(trader), usdcAmount);
+
+        bytes memory payload = abi.encode(user, yesTokenId, amount, price, true);
+
+        vm.startPrank(address(stargate));
+        stargate.deliverMessage(address(trader), payload, usdcAmount);
         vm.stopPrank();
 
-        assertEq(usdc.balanceOf(userA), initialUserUSDC - usdcAmount, "User USDC balance incorrect");
-        assertEq(
-            usdc.balanceOf(address(stargateOptimism)),
-            initialStargateUSDC + usdcAmount,
-            "Stargate USDC balance incorrect"
-        );
-
-        // Simulate cross-chain message
-        bytes memory payload = abi.encode(
-            userA,
-            yesTokenId,
-            amount,
-            price,
-            true // isBuy
-        );
-
-        vm.startPrank(address(stargatePolygon));
-        stargatePolygon.deliverMessage(address(polygonTrader), payload, usdcAmount);
-        vm.stopPrank();
-
-        assertEq(ctf.balanceOf(userA, yesTokenId), amount, "User did not receive position tokens");
+        assertEq(ctf.balanceOf(user, yesTokenId), amount, "User did not receive position tokens");
     }
 
-    function test_InvalidAmount() public {
-        uint256 amount = 0;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
-
-        vm.startPrank(userA);
-        vm.expectRevert(
-            abi.encodeWithSelector(LayerZeroPolyTrader.InvalidAmount.selector, 0, "USDC amount must be greater than 0")
-        );
-        optimismTrader.sendBuyOrder{ value: 0.01 ether }(yesTokenId, amount, price, options);
-        vm.stopPrank();
-    }
-
-    function test_InsufficientNativeFee() public {
-        uint256 amount = 100 * 10 ** 6;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
-
-        vm.startPrank(userA);
-        vm.expectRevert(abi.encodeWithSelector(LayerZeroPolyTrader.InsufficientNativeFee.selector, 0.01 ether, 0));
-        optimismTrader.sendBuyOrder(yesTokenId, amount, price, options);
-        vm.stopPrank();
-    }
-
-    function test_UnauthorizedCaller() public {
+    function test_RevertUnauthorizedCaller() public {
         uint256 amount = 100 * 10 ** 6;
         bytes memory payload = "";
 
         vm.startPrank(address(0xBAD));
         vm.expectRevert(
-            abi.encodeWithSelector(
-                LayerZeroPolyTrader.UnauthorizedCaller.selector,
-                address(0xBAD),
-                address(stargatePolygon)
-            )
+            abi.encodeWithSelector(LayerZeroPolyTrader.UnauthorizedCaller.selector, address(0xBAD), address(stargate))
         );
-        polygonTrader.sgReceive(1, "", 0, address(usdc), amount, payload);
+        trader.sgReceive(SRC_CHAIN_ID, "", TEST_NONCE, address(usdc), amount, payload);
         vm.stopPrank();
     }
 
-    function test_InvalidToken() public {
+    function test_RevertInvalidToken() public {
         address invalidToken = address(0xBAD);
         uint256 amount = 100 * 10 ** 6;
         bytes memory payload = "";
 
-        vm.startPrank(address(stargatePolygon));
+        vm.startPrank(address(stargate));
         vm.expectRevert(abi.encodeWithSelector(LayerZeroPolyTrader.InvalidToken.selector, invalidToken, address(usdc)));
-        polygonTrader.sgReceive(1, "", 0, invalidToken, amount, payload);
+        trader.sgReceive(SRC_CHAIN_ID, "", TEST_NONCE, invalidToken, amount, payload);
         vm.stopPrank();
     }
 
-    function test_DuplicateMessage() public {
+    function test_RevertDuplicateMessage() public {
         uint256 amount = 100 * 10 ** 6;
-        bytes memory payload = abi.encode(userA, yesTokenId, amount, 0.5 * 10 ** 6, true);
+        uint256 price = 0.5 * 10 ** 6;
+        uint256 usdcAmount = (amount * price) / 1e6;
 
-        vm.startPrank(address(stargatePolygon));
+        // Ensure enough USDC balance
+        usdc.mint(address(trader), usdcAmount * 2);
+
+        bytes memory payload = abi.encode(user, yesTokenId, amount, price, true);
+
+        vm.startPrank(address(stargate));
+
         // First call should succeed
-        stargatePolygon.deliverMessage(address(polygonTrader), payload, amount);
+        stargate.deliverMessage(address(trader), payload, usdcAmount);
 
-        // Second call should fail with the require message from MockStargate
-        vm.expectRevert("Message delivery failed");
-        stargatePolygon.deliverMessage(address(polygonTrader), payload, amount);
+        // Second call should fail with duplicate message error
+        vm.expectRevert(
+            abi.encodeWithSelector(LayerZeroPolyTrader.CrossChainOperationFailed.selector, "Message already processed")
+        );
+        stargate.deliverMessage(address(trader), payload, usdcAmount);
+        vm.stopPrank();
+    }
+
+    function test_RevertBuyPositionFailed() public {
+        uint256 amount = 1000000 * 10 ** 6;
+        uint256 price = 0.5 * 10 ** 6;
+        uint256 usdcAmount = (amount * price) / 1e6;
+
+        // Ensure the trader has enough USDC for the transfer but not enough for the position
+        usdc.mint(address(stargate), usdcAmount);
+
+        bytes memory payload = abi.encode(user, yesTokenId, amount, price, true);
+
+        vm.startPrank(address(stargate));
+
+        // First, make sure the stargate mock is properly funded
+        usdc.approve(address(trader), usdcAmount);
+
+        bytes memory expectedError = abi.encodeWithSelector(
+            LayerZeroPolyTrader.CrossChainOperationFailed.selector,
+            string("Buy position failed: InsufficientBalance")
+        );
+
+        vm.expectRevert(expectedError);
+        stargate.deliverMessage(address(trader), payload, usdcAmount);
+
         vm.stopPrank();
     }
 
     function logBalances() internal view {
         console.log("\n=== Balance Report ===");
-        console.log("User A USDC:", usdc.balanceOf(userA));
+        console.log("User USDC:", usdc.balanceOf(user));
         console.log("Position Manager USDC:", usdc.balanceOf(address(positionManager)));
-        console.log("Optimism Trader USDC:", usdc.balanceOf(address(optimismTrader)));
-        console.log("Polygon Trader USDC:", usdc.balanceOf(address(polygonTrader)));
-        console.log("User A YES Token:", ctf.balanceOf(userA, yesTokenId));
+        console.log("Trader USDC:", usdc.balanceOf(address(trader)));
+        console.log("User YES Token:", ctf.balanceOf(user, yesTokenId));
         console.log("==================\n");
     }
 }

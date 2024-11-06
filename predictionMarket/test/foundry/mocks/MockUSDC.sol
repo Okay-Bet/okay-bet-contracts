@@ -7,7 +7,7 @@ contract MockUSDC is ERC20 {
     uint8 private constant _decimals = 6;
 
     constructor() ERC20("USD Coin", "USDC") {
-        _mint(msg.sender, 1_000_000 * 10**_decimals);
+        _mint(msg.sender, 1_000_000 * 10 ** _decimals);
     }
 
     function decimals() public pure override returns (uint8) {
