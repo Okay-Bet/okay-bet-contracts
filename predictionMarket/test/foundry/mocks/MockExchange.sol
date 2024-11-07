@@ -7,10 +7,10 @@ import { IERC1155Receiver } from "@openzeppelin/contracts/token/ERC1155/IERC1155
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { IExchange } from "../../../contracts/interfaces/IExchange.sol";
 
-
 contract MockExchange is IExchange, IERC1155Receiver {
     IERC20 public immutable usdc;
     IERC1155 public immutable ctf;
+    bool public failMode;
 
     event OrderFilled(
         bytes32 indexed orderHash,
@@ -26,9 +26,18 @@ contract MockExchange is IExchange, IERC1155Receiver {
     constructor(address _usdc, address _ctf) {
         usdc = IERC20(_usdc);
         ctf = IERC1155(_ctf);
+        failMode = false;
+    }
+
+    function setFailMode(bool _failMode) external {
+        failMode = _failMode;
     }
 
     function fillOrder(Order calldata order) external override {
+        if (failMode) {
+            revert("Exchange: Operation failed");
+        }
+
         // Simulate exchange behavior
         if (order.side == 0) {
             // Buy

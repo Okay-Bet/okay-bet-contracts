@@ -5,16 +5,18 @@ import "forge-std/Test.sol";
 import "forge-std/console.sol";
 import { LayerZeroPolyRouter } from "../../contracts/LayerZeroPolyRouter.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { MessagingFee, SendParam } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+import { MessagingFee, SendParam, OFTLimit, OFTReceipt, OFTFeeDetail } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IStargate } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
-import { MessagingReceipt, OFTReceipt } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+import { MessagingReceipt } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oft/interfaces/IOFT.sol";
+import { OptionsBuilder } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
 
-// Import mocks
 import { MockUSDC } from "./mocks/MockUSDC.sol";
 import { MockStargate } from "./mocks/MockStargate.sol";
 
 contract LayerZeroPolyRouterTest is Test {
+    using OptionsBuilder for bytes;
+
     LayerZeroPolyRouter public router;
     MockUSDC public usdc;
     MockStargate public stargate;
@@ -22,6 +24,14 @@ contract LayerZeroPolyRouterTest is Test {
     address public owner;
     address public user;
     uint32 public constant POLYGON_EID = 40161;
+    uint128 public constant COMPOSE_GAS_LIMIT = 200000;
+
+    // Test constants
+    uint256 constant INITIAL_BALANCE = 10000 * 10 ** 6;
+    uint256 constant TOKEN_ID = 1;
+    uint256 constant AMOUNT = 100 * 10 ** 6;
+    uint256 constant PRICE = 0.5 * 10 ** 6;
+    uint256 constant NATIVE_FEE = 0.01 ether;
 
     event OrderSent(
         bytes32 indexed messageHash,
@@ -33,145 +43,128 @@ contract LayerZeroPolyRouterTest is Test {
         bool isBuy
     );
 
-    event DestinationEndpointUpdated(uint32 oldDstEid, uint32 newDstEid);
     event StargateApprovalUpdated(uint256 amount);
+    event DestinationEndpointUpdated(uint32 oldDstEid, uint32 newDstEid);
 
     function setUp() public {
         owner = address(this);
         user = address(0xB0B);
         vm.deal(user, 100 ether);
 
-        // Deploy mock contracts
         usdc = new MockUSDC();
         stargate = new MockStargate(address(usdc));
-
-        // Deploy router
         router = new LayerZeroPolyRouter(address(stargate), address(usdc), POLYGON_EID, owner);
 
-        // Setup initial balances and approvals
-        usdc.mint(user, 10000 * 10 ** 6);
+        usdc.mint(user, INITIAL_BALANCE);
         vm.prank(user);
         usdc.approve(address(router), type(uint256).max);
     }
 
-    function test_InitialSetup() public {
-        assertEq(address(router.stargate()), address(stargate), "Incorrect stargate address");
-        assertEq(address(router.usdc()), address(usdc), "Incorrect USDC address");
-        assertEq(router.dstEid(), POLYGON_EID, "Incorrect destination endpoint ID");
-        assertEq(router.owner(), owner, "Incorrect owner");
-        assertEq(usdc.allowance(address(router), address(stargate)), type(uint256).max, "Incorrect stargate allowance");
+    function test_QuoteOrder() public {
+        LayerZeroPolyRouter.QuoteData memory quote = router.quoteOrder(TOKEN_ID, AMOUNT, PRICE);
+
+        uint256 expectedUSDCAmount = (AMOUNT * PRICE) / 1e6;
+        assertEq(quote.usdcAmount, expectedUSDCAmount, "Incorrect USDC amount calculation");
+        assertTrue(quote.nativeFee > 0, "Native fee should be greater than 0");
+        assertTrue(quote.minReceived <= expectedUSDCAmount, "Min received should be less than or equal to sent amount");
     }
 
-    function test_SendBuyOrder() public {
-        uint256 tokenId = 1;
-        uint256 amount = 100 * 10 ** 6;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
-
-        uint256 usdcAmount = (amount * price) / 1e6;
-        bytes memory expectedComposeMsg = abi.encode(user, tokenId, amount, price, true);
-        bytes32 expectedMessageHash = keccak256(expectedComposeMsg);
-
-        uint256 initialUserUSDC = usdc.balanceOf(user);
-
-        vm.expectEmit(true, true, true, true);
-        emit OrderSent(expectedMessageHash, user, tokenId, amount, price, usdcAmount, true);
-
-        vm.prank(user);
-        router.sendBuyOrder{ value: 0.01 ether }(tokenId, amount, price, options);
-
-        assertEq(usdc.balanceOf(user), initialUserUSDC - usdcAmount, "Incorrect user USDC balance after order");
-    }
-
-    function test_RevertInvalidAmount() public {
-        uint256 tokenId = 1;
-        uint256 amount = 0;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
-
-        vm.prank(user);
+    function test_QuoteOrder_ZeroAmount() public {
         vm.expectRevert(
             abi.encodeWithSelector(LayerZeroPolyRouter.InvalidAmount.selector, 0, "USDC amount must be greater than 0")
         );
-        router.sendBuyOrder{ value: 0.01 ether }(tokenId, amount, price, options);
+        router.quoteOrder(TOKEN_ID, 0, PRICE);
     }
 
-    function test_RevertInsufficientNativeFee() public {
-        uint256 tokenId = 1;
-        uint256 amount = 100 * 10 ** 6;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
+    function test_SendBuyOrder_Success() public {
+        uint256 expectedUSDCAmount = (AMOUNT * PRICE) / 1e6;
+
+        // Create the exact same compose message as in the contract
+        bytes memory expectedComposeMsg = abi.encode(
+            user, // trader address
+            TOKEN_ID, // token ID
+            AMOUNT, // amount of tokens
+            PRICE, // price per token
+            true, // isBuy flag
+            expectedUSDCAmount // amountLD
+        );
+
+        vm.expectEmit(true, true, false, true);
+        emit OrderSent(keccak256(expectedComposeMsg), user, TOKEN_ID, AMOUNT, PRICE, expectedUSDCAmount, true);
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(LayerZeroPolyRouter.InsufficientNativeFee.selector, 0.01 ether, 0));
-        router.sendBuyOrder(tokenId, amount, price, options);
+        router.sendBuyOrder{ value: NATIVE_FEE }(TOKEN_ID, AMOUNT, PRICE);
+
+        assertEq(stargate.lastTokenAmount(), expectedUSDCAmount, "Incorrect USDC amount sent to Stargate");
+        assertEq(stargate.lastDestinationEid(), POLYGON_EID, "Incorrect destination chain");
     }
 
-    function test_RefundExcessNativeFee() public {
-        uint256 tokenId = 1;
-        uint256 amount = 100 * 10 ** 6;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
+    function test_SendBuyOrder_InsufficientNativeFee() public {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(LayerZeroPolyRouter.InsufficientNativeFee.selector, NATIVE_FEE, 0));
+        router.sendBuyOrder(TOKEN_ID, AMOUNT, PRICE);
+    }
 
-        uint256 excessAmount = 1 ether;
+    function test_SendBuyOrder_AmountOutsideLimits() public {
+        // Set mock limits in Stargate
+        stargate.setMockLimits(1000 * 10 ** 6, 2000 * 10 ** 6);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LayerZeroPolyRouter.AmountOutsideLimits.selector,
+                (AMOUNT * PRICE) / 1e6,
+                1000 * 10 ** 6,
+                2000 * 10 ** 6
+            )
+        );
+        router.sendBuyOrder{ value: NATIVE_FEE }(TOKEN_ID, AMOUNT, PRICE);
+    }
+
+    function test_SendBuyOrder_RefundExcessNativeFee() public {
+        uint256 excessFee = 0.02 ether;
         uint256 initialBalance = user.balance;
 
         vm.prank(user);
-        router.sendBuyOrder{ value: excessAmount }(tokenId, amount, price, options);
+        router.sendBuyOrder{ value: NATIVE_FEE + excessFee }(TOKEN_ID, AMOUNT, PRICE);
 
-        assertEq(user.balance, initialBalance - 0.01 ether, "Excess native fee not refunded");
+        assertEq(user.balance, initialBalance - NATIVE_FEE, "Excess native fee not refunded");
     }
 
-    function test_UpdateDestinationEndpoint() public {
-        uint32 newDstEid = 50;
+    function test_SendBuyOrder_StargateFailure() public {
+        stargate.setFailMode(true);
+        uint256 initialUSDCBalance = usdc.balanceOf(user);
 
-        vm.expectEmit(true, true, true, true);
+        vm.prank(user);
+        vm.expectRevert(LayerZeroPolyRouter.StargateOperationFailed.selector);
+        router.sendBuyOrder{ value: NATIVE_FEE }(TOKEN_ID, AMOUNT, PRICE);
+
+        assertEq(usdc.balanceOf(user), initialUSDCBalance, "USDC not refunded after Stargate failure");
+    }
+
+    function test_SendBuyOrder_DynamicApproval() public {
+        // Reset approval to 0
+        vm.startPrank(address(router));
+        usdc.approve(address(stargate), 0);
+        vm.stopPrank();
+
+        vm.prank(user);
+        router.sendBuyOrder{ value: NATIVE_FEE }(TOKEN_ID, AMOUNT, PRICE);
+    }
+
+    function test_SetDestinationEndpoint() public {
+        uint32 newDstEid = 30111;
+
+        vm.expectEmit(true, true, false, true);
         emit DestinationEndpointUpdated(POLYGON_EID, newDstEid);
 
         router.setDestinationEndpoint(newDstEid);
         assertEq(router.dstEid(), newDstEid, "Destination endpoint not updated");
     }
 
-    function test_RevertUnauthorizedEndpointUpdate() public {
-        vm.expectRevert();
+    function test_SetDestinationEndpoint_OnlyOwner() public {
         vm.prank(user);
-        router.setDestinationEndpoint(50);
-    }
-
-    function test_UpdateStargateApproval() public {
-        vm.expectEmit(true, true, true, true);
-        emit StargateApprovalUpdated(type(uint256).max);
-
-        router.updateStargateApproval();
-        assertEq(
-            usdc.allowance(address(router), address(stargate)),
-            type(uint256).max,
-            "Stargate approval not updated"
-        );
-    }
-
-    function test_RevertUnauthorizedApprovalUpdate() public {
-        vm.expectRevert();
-        vm.prank(user);
-        router.updateStargateApproval();
-    }
-
-    function test_RevertStargateSendTokenFailed() public {
-        uint256 amount = 100 * 10 ** 6;
-        uint256 price = 0.5 * 10 ** 6;
-        bytes memory options = "";
-
-        // Setup test conditions
-        vm.startPrank(user);
-        usdc.approve(address(router), type(uint256).max);
-
-        // Set stargate to fail mode
-        stargate.setFailMode(true);
-
-        // Expect the specific custom error
-        vm.expectRevert(abi.encodeWithSelector(LayerZeroPolyRouter.StargateOperationFailed.selector));
-
-        router.sendBuyOrder{ value: 0.01 ether }(1, amount, price, options);
-        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
+        router.setDestinationEndpoint(30111);
     }
 }

@@ -7,7 +7,17 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { IStargate } from "@stargatefinance/stg-evm-v2/src/interfaces/IStargate.sol";
 import { PolymarketPositionManager } from "./PolymarketPositionManager.sol";
 
-contract LayerZeroPolyTrader is Ownable {
+interface ILayerZeroReceiver {
+    function lzCompose(
+        address _from,
+        bytes32 _guid,
+        bytes calldata _message,
+        address _executor,
+        bytes calldata _extraData
+    ) external payable;
+}
+
+contract LayerZeroPolyTrader is Ownable, ILayerZeroReceiver {
     using SafeERC20 for IERC20;
 
     // Custom errors
@@ -15,14 +25,14 @@ contract LayerZeroPolyTrader is Ownable {
     error UnauthorizedCaller(address caller, address expected);
     error InvalidToken(address token, address expected);
     error CrossChainOperationFailed(string reason);
+    error InsufficientBalance(uint256 required, uint256 available);
+    error ApprovalFailed(address token, address spender);
 
     // State variables
-    PolymarketPositionManager public positionManager;
-    IStargate public stargate;
-    IERC20 public usdc;
-
-    // Mapping to track processed messages
-    mapping(uint32 => mapping(uint64 => bool)) public processedMessages;
+    PolymarketPositionManager public immutable positionManager;
+    IStargate public immutable stargate;
+    IERC20 public immutable usdc;
+    address public immutable endpoint;
 
     // Events
     event OrderExecuted(
@@ -34,77 +44,93 @@ contract LayerZeroPolyTrader is Ownable {
         bool isBuy
     );
 
+    event RefundIssued(address indexed trader, uint256 amount, string reason);
+
+    event ApprovalUpdated(address indexed token, address indexed spender, uint256 amount);
+
     constructor(
         address _positionManager,
         address _stargate,
         address _usdc,
+        address _endpoint,
         address initialOwner
     ) Ownable(initialOwner) {
         if (_positionManager == address(0)) revert InvalidAddress("position manager");
         if (_stargate == address(0)) revert InvalidAddress("stargate");
         if (_usdc == address(0)) revert InvalidAddress("usdc");
+        if (_endpoint == address(0)) revert InvalidAddress("endpoint");
 
         positionManager = PolymarketPositionManager(_positionManager);
         stargate = IStargate(_stargate);
         usdc = IERC20(_usdc);
+        endpoint = _endpoint;
 
-        // Approve PositionManager to spend USDC
-        usdc.approve(address(positionManager), type(uint256).max);
+        // Initial approval setup
+        _updateApproval(address(positionManager));
     }
 
-    function sgReceive(
-        uint16 _srcChainId,
-        bytes memory _srcAddress,
-        uint64 _nonce,
-        address _token,
-        uint256 amountLD,
-        bytes memory _payload
-    ) external {
-        // Validate caller and token
-        if (msg.sender != address(stargate)) {
-            revert UnauthorizedCaller(msg.sender, address(stargate));
+    function _updateApproval(address spender) internal {
+        // First reset allowance to 0
+        uint256 currentAllowance = usdc.allowance(address(this), spender);
+        if (currentAllowance > 0) {
+            usdc.safeDecreaseAllowance(spender, currentAllowance);
         }
 
-        if (_token != address(usdc)) {
-            revert InvalidToken(_token, address(usdc));
-        }
+        // Then set to max
+        usdc.safeIncreaseAllowance(spender, type(uint256).max);
+        emit ApprovalUpdated(address(usdc), spender, type(uint256).max);
+    }
 
-        // Prevent duplicate messages
-        if (processedMessages[uint32(_srcChainId)][_nonce]) {
-            revert CrossChainOperationFailed("Message already processed");
-        }
+    function updatePositionManagerApproval() external onlyOwner {
+        _updateApproval(address(positionManager));
+    }
 
-        processedMessages[uint32(_srcChainId)][_nonce] = true;
+    function lzCompose(
+        address _from,
+        bytes32 _guid,
+        bytes calldata _message,
+        address _executor,
+        bytes calldata _extraData
+    ) external payable {
+        // Verify caller
+        if (msg.sender != endpoint) revert UnauthorizedCaller(msg.sender, endpoint);
+        if (_from != address(stargate)) revert UnauthorizedCaller(_from, address(stargate));
 
-        (address trader, uint256 tokenId, uint256 amount, uint256 price, bool isBuy) = abi.decode(
-            _payload,
-            (address, uint256, uint256, uint256, bool)
+        // Decode the message
+        (address trader, uint256 tokenId, uint256 amount, uint256 price, bool isBuy, uint256 amountLD) = abi.decode(
+            _message,
+            (address, uint256, uint256, uint256, bool, uint256)
         );
 
+        // Verify USDC balance
+        uint256 balance = usdc.balanceOf(address(this));
+        if (balance < amountLD) {
+            revert InsufficientBalance(amountLD, balance);
+        }
+
+        // Check and update approval if necessary
+        uint256 currentAllowance = usdc.allowance(address(this), address(positionManager));
+        if (currentAllowance < amountLD) {
+            _updateApproval(address(positionManager));
+        }
+
         if (isBuy) {
-            bytes32 messageHash = keccak256(_payload);
+            bytes32 messageHash = keccak256(_message);
 
             try positionManager.buyPosition(tokenId, amount, price) {
-                // Transfer position tokens to trader
-                positionManager.transferPosition(trader, tokenId, amount);
-                emit OrderExecuted(messageHash, trader, tokenId, amount, price, isBuy);
-            } catch (bytes memory reason) {
-                // If the buy fails, refund the USDC to the trader
+                try positionManager.transferPosition(trader, tokenId, amount) {
+                    emit OrderExecuted(messageHash, trader, tokenId, amount, price, true);
+                    return;
+                } catch {
+                    usdc.safeTransfer(trader, amountLD);
+                    emit RefundIssued(trader, amountLD, "Position transfer failed");
+                }
+            } catch {
                 usdc.safeTransfer(trader, amountLD);
-
-                // Extract the selector from the error data
-                bytes4 selector;
-                assembly {
-                    selector := mload(add(reason, 32))
-                }
-
-                // Check if it's an InsufficientBalance error
-                if (selector == bytes4(keccak256("InsufficientBalance(uint256,uint256)"))) {
-                    revert CrossChainOperationFailed("Buy position failed: InsufficientBalance");
-                }
-
-                revert CrossChainOperationFailed("Buy position failed with low-level error");
+                emit RefundIssued(trader, amountLD, "Buy position failed");
             }
+            // Move the revert after the refund
+            revert CrossChainOperationFailed("Buy position failed");
         }
     }
 

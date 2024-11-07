@@ -145,8 +145,6 @@ contract PolymarketPositionManager is IERC1155Receiver, Ownable, AccessControl {
         bytes32 orderHash = getOrderHash(order);
         order.signature = signOrder(orderHash);
 
-        emit OrderCreated(orderHash, msg.sender, tokenId, amount, price, isBuy);
-
         return order;
     }
 
