@@ -174,19 +174,20 @@ contract LayerZeroPolyTraderTest is Test {
     }
 
     function test_BuyPositionFailureRefund() public {
-        uint256 amount = 100 * 10 ** 6; // 100M tokens
-        uint256 price = 0.5 * 10 ** 6; // 0.5 USDC per token
-        uint256 usdcAmount = (amount * price) / 1e6; // 50M USDC
+        uint256 amount = 100 * 10 ** 6;
+        uint256 price = 0.5 * 10 ** 6;
+        uint256 usdcAmount = (amount * price) / 1e6;
 
-        // Reset balances using burn
+        // Reset all balances
+        vm.startPrank(address(this));
         usdc.burn(address(trader), usdc.balanceOf(address(trader)));
         usdc.burn(user, usdc.balanceOf(user));
         usdc.burn(address(positionManager), usdc.balanceOf(address(positionManager)));
+        vm.stopPrank();
 
         // Set up clean initial state
         usdc.mint(user, 10000000000);
         usdc.mint(address(trader), usdcAmount);
-        // Give PositionManager enough USDC
         usdc.mint(address(positionManager), 10000000000);
 
         // Enable exchange fail mode
@@ -194,27 +195,25 @@ contract LayerZeroPolyTraderTest is Test {
 
         bytes memory message = abi.encode(user, yesTokenId, amount, price, true, usdcAmount);
         bytes32 guid = keccak256("test-guid");
+        bytes32 messageHash = keccak256(message);
 
         uint256 initialUserBalance = usdc.balanceOf(user);
 
         vm.startPrank(endpoint);
 
-        // Record state before operation
-        uint256 preOpUserBalance = usdc.balanceOf(user);
-
+        // Expect both events
         vm.expectEmit(true, true, false, true);
         emit RefundIssued(user, usdcAmount, "Buy position failed");
 
-        vm.expectRevert(
-            abi.encodeWithSelector(LayerZeroPolyTrader.CrossChainOperationFailed.selector, "Buy position failed")
-        );
+        vm.expectEmit(true, true, false, true);
+        emit OrderExecuted(messageHash, user, yesTokenId, amount, price, false);
 
+        // Execute the call - should not revert
         trader.lzCompose(address(stargate), guid, message, address(0), "");
 
         vm.stopPrank();
 
-        // Verify final balances after revert
-        assertEq(usdc.balanceOf(user), preOpUserBalance + usdcAmount, "USDC not properly refunded");
+        assertEq(usdc.balanceOf(user), initialUserBalance + usdcAmount, "USDC not properly refunded");
     }
 
     function logBalances() internal view {

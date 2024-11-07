@@ -116,21 +116,29 @@ contract LayerZeroPolyTrader is Ownable, ILayerZeroReceiver {
 
         if (isBuy) {
             bytes32 messageHash = keccak256(_message);
+            bool success = true;
 
             try positionManager.buyPosition(tokenId, amount, price) {
                 try positionManager.transferPosition(trader, tokenId, amount) {
                     emit OrderExecuted(messageHash, trader, tokenId, amount, price, true);
-                    return;
                 } catch {
-                    usdc.safeTransfer(trader, amountLD);
-                    emit RefundIssued(trader, amountLD, "Position transfer failed");
+                    success = false;
                 }
             } catch {
-                usdc.safeTransfer(trader, amountLD);
-                emit RefundIssued(trader, amountLD, "Buy position failed");
+                success = false;
             }
-            // Move the revert after the refund
-            revert CrossChainOperationFailed("Buy position failed");
+
+            // Handle failure by doing refund
+            if (!success) {
+                // First do the refund
+                usdc.transfer(trader, amountLD);
+                emit RefundIssued(trader, amountLD, "Buy position failed");
+                // Then emit failure
+                emit OrderExecuted(messageHash, trader, tokenId, amount, price, false);
+            }
+
+            // Return successfully without reverting
+            return;
         }
     }
 
