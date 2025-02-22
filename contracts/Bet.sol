@@ -23,7 +23,7 @@ contract Bet {
     BetDetails public bet;
     mapping(address => uint256) public fundedAmount;
 
-    uint256 public constant WAGER_RATIO_PRECISION = 10000; // Allows for 2 decimal places of precision
+    uint256 public constant WAGER_RATIO_PRECISION = 10000; 
 
     event BetCreated(
         address indexed betAddress,

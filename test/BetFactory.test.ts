@@ -58,6 +58,7 @@ describe("BetFactory Contract", function () {
   }
 
   it("should create a new bet", async function () {
+    const wagerRatio = 5000; // 50% * 100 for new precision
     const tx = await betFactory.createBet(
       maker.address,
       taker.address,
@@ -90,7 +91,7 @@ describe("BetFactory Contract", function () {
         maker.address, // Same as maker
         judge.address,
         totalWager,
-        wagerRatio,
+        5000, // 50% * 100 for new precision
         "Test Conditions",
         expirationBlocks,
         usdcToken.address
@@ -102,8 +103,8 @@ describe("BetFactory Contract", function () {
         maker.address,
         taker.address,
         judge.address,
-        0, // Invalid total wager
-        wagerRatio,
+        totalWager,
+        10001, // Invalid wager ratio (>100%)
         "Test Conditions",
         expirationBlocks,
         usdcToken.address
@@ -627,7 +628,7 @@ describe("BetFactory Contract", function () {
 
     it("should create a bet with an empty string in wager conditions", async function () {
       const emptyConditions = "";
-  
+
       const tx = await betFactory.createBet(
         maker.address,
         taker.address,
@@ -638,28 +639,28 @@ describe("BetFactory Contract", function () {
         expirationBlocks,
         mockToken.address
       );
-  
+
       const receipt = await tx.wait();
       const event = receipt.events?.find((e) => e.event === "BetCreated");
       expect(event, "BetCreated event should be emitted").to.not.be.undefined;
-  
+
       const betAddress = event?.args?.betAddress;
       expect(betAddress, "Bet address should be defined").to.not.be.undefined;
       expect(
         ethers.utils.isAddress(betAddress),
         "Bet address should be a valid Ethereum address"
       ).to.be.true;
-  
+
       const bet = await ethers.getContractAt("Bet", betAddress);
       const betDetails = await bet.getBetDetails();
-  
+
       expect(betDetails.conditions).to.equal(emptyConditions);
     });
-  
+
     it("should create a bet with a very long string in wager conditions", async function () {
       // Create a string that's 1000 characters long
       const longConditions = "x".repeat(1000);
-  
+
       const tx = await betFactory.createBet(
         maker.address,
         taker.address,
@@ -670,23 +671,24 @@ describe("BetFactory Contract", function () {
         expirationBlocks,
         mockToken.address
       );
-  
+
       const receipt = await tx.wait();
       const event = receipt.events?.find((e) => e.event === "BetCreated");
       expect(event, "BetCreated event should be emitted").to.not.be.undefined;
-  
+
       const betAddress = event?.args?.betAddress;
       expect(betAddress, "Bet address should be defined").to.not.be.undefined;
       expect(
         ethers.utils.isAddress(betAddress),
         "Bet address should be a valid Ethereum address"
       ).to.be.true;
-  
+
       const bet = await ethers.getContractAt("Bet", betAddress);
       const betDetails = await bet.getBetDetails();
-  
+
       expect(betDetails.conditions).to.equal(longConditions);
       expect(betDetails.conditions.length).to.equal(1000);
     });
+    
   });
 });

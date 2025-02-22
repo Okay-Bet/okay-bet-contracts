@@ -22,9 +22,9 @@
         "type": "uint256"
       },
       {
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "_wagerRatio",
-        "type": "uint8"
+        "type": "uint256"
       },
       {
         "internalType": "string",
@@ -80,9 +80,9 @@
       },
       {
         "indexed": false,
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "wagerRatio",
-        "type": "uint8"
+        "type": "uint256"
       },
       {
         "indexed": false,
@@ -255,6 +255,19 @@
   },
   {
     "inputs": [],
+    "name": "WAGER_RATIO_PRECISION",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "bet",
     "outputs": [
       {
@@ -278,9 +291,9 @@
         "type": "uint256"
       },
       {
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "wagerRatio",
-        "type": "uint8"
+        "type": "uint256"
       },
       {
         "internalType": "string",
@@ -331,13 +344,7 @@
     "type": "function"
   },
   {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      }
-    ],
+    "inputs": [],
     "name": "fundBet",
     "outputs": [],
     "stateMutability": "payable",
@@ -387,9 +394,9 @@
         "type": "uint256"
       },
       {
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "wagerRatio",
-        "type": "uint8"
+        "type": "uint256"
       },
       {
         "internalType": "string",

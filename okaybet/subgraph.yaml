@@ -6,7 +6,7 @@ dataSources:
     name: BetFactory
     network: base
     source:
-      address: "0x417dEf0b502FeC1D1E187821B6a86920e25239d8"
+      address: "0x50EB806Cbf052c4AD4D4862d36991769fBE397De"
       abi: BetFactory
       startBlock: 17012753
     mapping:
@@ -20,7 +20,7 @@ dataSources:
         - name: BetFactory
           file: ./abis/BetFactory.json
       eventHandlers:
-        - event: BetCreated(indexed address,indexed address,indexed address,address,uint256,uint8,string,uint256,address)
+        - event: BetCreated(indexed address,indexed address,indexed address,address,uint256,uint256,string,uint256,address)
           handler: handleBetCreated
       file: ./src/bet-factory.ts
 templates:

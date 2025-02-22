@@ -52,7 +52,7 @@ describe("Bet Contract", function () {
       takerAddress || taker.address, // Use provided taker address or default to taker
       judge.address,
       totalWager,
-      wagerRatio,
+      wagerRatio * 100,
       "Test Conditions",
       expirationBlocks,
       wagerCurrency
@@ -74,22 +74,23 @@ describe("Bet Contract", function () {
       expect(betDetails.taker).to.equal(taker.address);
       expect(betDetails.judge).to.equal(judge.address);
       expect(betDetails.totalWager).to.equal(totalWager);
-      expect(betDetails.wagerRatio).to.equal(50);
+      expect(betDetails.wagerRatio).to.equal(5000); // 50% * 100 for new precision
       expect(betDetails.conditions).to.equal("Test Conditions");
       expect(betDetails.status).to.equal(0); // Unfunded
     });
 
-
-
     it("should allow funding the bet", async function () {
-      await usdcToken.connect(maker).approve(bet.address, totalWager.div(2));
-      await usdcToken.connect(taker).approve(bet.address, totalWager.div(2));
+      const makerWager = totalWager.div(2);
+      const takerWager = totalWager.div(2);
 
-      await expect(bet.connect(maker).fundBet(totalWager.div(2)))
+      await usdcToken.connect(maker).approve(bet.address, makerWager);
+      await usdcToken.connect(taker).approve(bet.address, takerWager);
+
+      await expect(bet.connect(maker).fundBet())
         .to.emit(bet, "BetFunded")
-        .withArgs(bet.address, maker.address, totalWager.div(2), 1); // 1 is for PartiallyFunded status
+        .withArgs(bet.address, maker.address, makerWager, 1); // 1 is for PartiallyFunded status
 
-      const fundTakerTx = await bet.connect(taker).fundBet(totalWager.div(2));
+      const fundTakerTx = await bet.connect(taker).fundBet();
       const receipt = await fundTakerTx.wait();
 
       // Check for BetFunded event
@@ -133,24 +134,17 @@ describe("Bet Contract", function () {
     it("should allow the judge to resolve the bet", async function () {
       await usdcToken.connect(maker).approve(bet.address, totalWager.div(2));
       await usdcToken.connect(taker).approve(bet.address, totalWager.div(2));
-      await bet.connect(maker).fundBet(totalWager.div(2));
-      await bet.connect(taker).fundBet(totalWager.div(2));
+      await bet.connect(maker).fundBet();
+      await bet.connect(taker).fundBet();
 
-      const resolveTx = await bet.connect(judge).resolveBet(maker.address);
-      const receipt = await resolveTx.wait();
+      await expect(bet.connect(judge).resolveBet(maker.address))
+        .to.emit(bet, "BetResolved")
+        .withArgs(bet.address, maker.address, totalWager, anything);
 
-      // Check for BetResolved event
-      const betResolvedEvent = receipt.events?.find(
-        (e) => e.event === "BetResolved"
-      );
-      expect(betResolvedEvent).to.not.be.undefined;
-      if (betResolvedEvent) {
-        expect(betResolvedEvent.args?.betAddress).to.equal(bet.address);
-        expect(betResolvedEvent.args?.winner).to.equal(maker.address);
-        expect(betResolvedEvent.args?.winningAmount).to.equal(totalWager);
-        expect(betResolvedEvent.args?.resolutionTimestamp).to.be.instanceOf(
-          BigNumber
-        );
+      const betDetails = await bet.bet();
+      expect(betDetails.status).to.equal(3); // Resolved
+      expect(betDetails.winner).to.equal(maker.address);
+    });
 
         // Convert BigNumber to number and check if it's a valid timestamp
         const timestamp = (
@@ -370,10 +364,13 @@ describe("Bet Contract", function () {
     });
 
     it("should allow funding the bet with ETH", async function () {
+      const makerWager = totalWager.div(2);
+      const takerWager = totalWager.div(2);
+
       // Fund the bet with maker
       const fundMakerTx = await bet
         .connect(maker)
-        .fundBet(totalWager.div(2), { value: totalWager.div(2) });
+        .fundBet({ value: makerWager });
       const makerReceipt = await fundMakerTx.wait();
 
       const makerFundedEvent = makerReceipt.events?.find(
@@ -492,12 +489,15 @@ describe("Bet Contract", function () {
     });
 
     it("should allow a smart contract to be a bettor", async function () {
-      await usdcToken.connect(maker).approve(bet.address, totalWager.div(2));
-      await usdcToken.mint(mockBettorContract.address, totalWager.div(2));
-      await mockBettorContract.approveBet(bet.address, totalWager.div(2));
+      const makerWager = totalWager.div(2);
+      const takerWager = totalWager.div(2);
 
-      await bet.connect(maker).fundBet(totalWager.div(2));
-      await mockBettorContract.fundBet(bet.address, totalWager.div(2));
+      await usdcToken.connect(maker).approve(bet.address, makerWager);
+      await usdcToken.mint(mockBettorContract.address, takerWager);
+      await mockBettorContract.approveBet(bet.address, takerWager);
+
+      await bet.connect(maker).fundBet();
+      await mockBettorContract.fundBet(bet.address);
 
       const betDetails = await bet.bet();
       expect(betDetails.status).to.equal(2); // FullyFunded
@@ -855,6 +855,29 @@ describe("Bet Contract", function () {
       await expect(bet.connect(judge).invalidateBet()).to.be.revertedWith(
         "Bet has been finalized"
       );
+    });
+
+    describe("Bet with precise wager ratios", function () {
+      it("should handle a 75.25% to 24.75% split", async function () {
+        await deployBet(75.25, usdcToken.address);
+
+        const makerWager = totalWager.mul(7525).div(10000);
+        const takerWager = totalWager.mul(2475).div(10000);
+
+        await usdcToken.connect(maker).approve(bet.address, makerWager);
+        await usdcToken.connect(taker).approve(bet.address, takerWager);
+
+        await bet.connect(maker).fundBet();
+        await bet.connect(taker).fundBet();
+
+        const betDetails = await bet.bet();
+        expect(betDetails.status).to.equal(2); // FullyFunded
+
+        await bet.connect(judge).resolveBet(maker.address);
+
+        const makerBalanceAfter = await usdcToken.balanceOf(maker.address);
+        expect(makerBalanceAfter).to.equal(totalWager);
+      });
     });
   });
 });

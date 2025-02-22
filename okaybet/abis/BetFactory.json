@@ -34,9 +34,9 @@
       },
       {
         "indexed": false,
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "wagerRatio",
-        "type": "uint8"
+        "type": "uint256"
       },
       {
         "indexed": false,
@@ -96,9 +96,9 @@
         "type": "uint256"
       },
       {
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "_wagerRatio",
-        "type": "uint8"
+        "type": "uint256"
       },
       {
         "internalType": "string",
