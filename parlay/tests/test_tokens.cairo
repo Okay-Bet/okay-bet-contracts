@@ -6,16 +6,23 @@ use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTr
 fn test_fake_usdc_deployment() {
     // Create test addresses
     let recipient = contract_address_const::<'RECIPIENT'>();
-    // let owner = contract_address_const::<'OWNER'>();
+    let owner = contract_address_const::<'OWNER'>();
 
     let contract = declare("FakeUSDC").unwrap().contract_class();
-    let (contract_address, _) = contract.deploy(@array![]).unwrap();
+
+        // Deploy with constructor arguments
+    let constructor_args = array![
+        recipient.into(),  // recipient address
+        owner.into(),     // owner address
+    ];
+
+    let (contract_address, _) = contract.deploy(@constructor_args).unwrap();
     
     let dispatcher = IERC20Dispatcher { contract_address };
     
     // Test initial supply was minted to recipient
     let balance = dispatcher.balance_of(recipient);
-    assert(balance == 100000000000000000000000000, 'Wrong initial supply');
+    assert(balance == 1000000000000000000000, 'Wrong initial supply');
 }
 
 #[test]
