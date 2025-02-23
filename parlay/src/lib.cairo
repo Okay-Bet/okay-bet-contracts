@@ -10,6 +10,7 @@ pub trait IHelloStarknet<TContractState> {
 
 mod fakeUSDC;
 mod parlayToken;
+mod betslip;
 
 /// Simple contract for managing balance.
 #[starknet::contract]

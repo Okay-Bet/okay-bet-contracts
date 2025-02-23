@@ -1,6 +1,7 @@
 use starknet::{ContractAddress, contract_address_const};
 use snforge_std::{declare, ContractClassTrait, DeclareResultTrait};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+use openzeppelin::token::erc721::interface::{IERC721Dispatcher, IERC721DispatcherTrait};
 
 #[test]
 fn test_fake_usdc_deployment() {
@@ -51,6 +52,37 @@ fn test_parlay_token_deployment() {
     // Check recipient balance is 0
     let recipient_balance = erc20.balance_of(recipient);
     assert(recipient_balance == 0, 'Recipient should have 0');
+}
+
+#[test]
+fn test_betslip_deployment() {
+    // Create test addresses
+    let owner = contract_address_const::<'OWNER'>();
+    let recipient = contract_address_const::<'RECIPIENT'>();
+
+    let contract = declare("Betslip").unwrap().contract_class();
+
+    // Deploy with constructor arguments
+    let constructor_args = array![
+        owner.into(),     // owner address
+    ];
+
+    let (contract_address, _) = contract.deploy(@constructor_args).unwrap();
+    
+    let dispatcher = IERC721Dispatcher { contract_address };
+    
+    // Test initial state
+    let name = dispatcher.name();
+    assert(name == 'Betslip', 'Wrong name');
+    
+    let symbol = dispatcher.symbol();
+    assert(symbol == 'BET', 'Wrong symbol');
+    
+    let total_supply = dispatcher.total_supply();
+    assert(total_supply == 0, 'Initial supply should be 0');
+    
+    let balance = dispatcher.balance_of(recipient);
+    assert(balance == 0, 'Recipient should have 0 NFTs');
 }
 
 // #[test]
