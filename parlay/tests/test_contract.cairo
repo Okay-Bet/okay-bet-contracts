@@ -45,3 +45,4 @@ fn test_cannot_increase_balance_with_zero_value() {
         }
     };
 }
+

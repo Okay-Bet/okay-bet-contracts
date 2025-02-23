@@ -8,6 +8,9 @@ pub trait IHelloStarknet<TContractState> {
     fn get_balance(self: @TContractState) -> felt252;
 }
 
+mod fakeUSDC;
+mod parlayToken;
+
 /// Simple contract for managing balance.
 #[starknet::contract]
 mod HelloStarknet {
