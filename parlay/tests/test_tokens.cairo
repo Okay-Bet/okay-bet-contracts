@@ -27,15 +27,30 @@ fn test_fake_usdc_deployment() {
 
 #[test]
 fn test_parlay_token_deployment() {
-    let contract = declare("ParlayToken").unwrap().contract_class();
-    let (contract_address, _) = contract.deploy(@array![]).unwrap();
+    // Deploy contract
+    let contract = declare("ParlayToken");
+    let contract_class = contract.unwrap().contract_class();
+    
+    // Create addresses 
+    let recipient: ContractAddress = contract_address_const::<'RECIPIENT'>();
+    let owner: ContractAddress = contract_address_const::<'OWNER'>();
+    
+    // Deploy with constructor arguments in an array
+    let mut calldata = ArrayTrait::new();
+    calldata.append(owner.into());
+    
+    let (contract_address, _) = contract_class.deploy(@calldata).unwrap();
+    
+    // Create dispatcher to interact with token
+    let erc20 = IERC20Dispatcher { contract_address };
+    
+    // Check initial supply is 0
+    let initial_supply = erc20.total_supply();
+    assert(initial_supply == 0, 'Initial supply should be 0');
 
-    let dispatcher = IERC20Dispatcher { contract_address };
-    
-    
-    // Test initial supply is 0
-    let total_supply = dispatcher.total_supply();
-    assert(total_supply == 0, 'Initial supply should be 0');
+    // Check recipient balance is 0
+    let recipient_balance = erc20.balance_of(recipient);
+    assert(recipient_balance == 0, 'Recipient should have 0');
 }
 
 // #[test]
