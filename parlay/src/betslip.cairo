@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Compatible with OpenZeppelin Contracts for Cairo ^0.20.0
+use starknet::{ContractAddress};
+
+#[starknet::interface]
+pub trait IbetMint<TContractState> {
+    fn safeMint(ref self: TContractState, recipient: ContractAddress, tokenId: u256, data: Span<felt252>,);
+}
+
 
 #[starknet::contract]
 mod Betslip {
