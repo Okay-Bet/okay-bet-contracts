@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Compatible with OpenZeppelin Contracts for Cairo ^0.20.0
+use starknet::{ContractAddress};
+
+#[starknet::interface]
+pub trait ImyMint<TContractState> {
+    fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
+
+    
+}
 
 #[starknet::contract]
 mod ParlayToken {
