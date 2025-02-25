@@ -91,7 +91,7 @@ mod ParlayContract{
                 // get the markets map from the front end call
             self.markets.entry(market_hash).write(end_date);
                 // token id should be enumreserveserated
-            let tokenId = self.betslip_counter.read()+1; // wrong
+            let tokenId = self.betslip_counter.read()+1; 
             self.betslip_counter.write(tokenId);
 
             let data = array![market_hash, end_date.into()];
