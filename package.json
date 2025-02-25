@@ -6,6 +6,7 @@
   },
   "dependencies": {
     "@nomiclabs/hardhat-waffle": "^2.0.6",
+    "@openzeppelin/contracts": "^5.1.0",
     "@thirdweb-dev/contracts": "^3.8.0",
     "thirdweb": "^5.34.0"
   },

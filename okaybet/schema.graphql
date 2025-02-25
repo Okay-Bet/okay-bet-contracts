@@ -5,7 +5,7 @@ type Bet @entity {
   taker: Bytes!
   judge: Bytes!
   totalWager: BigInt!
-  wagerRatio: Int!
+  wagerRatio: BigInt!
   conditions: String!
   status: BigInt!
   winner: Bytes
@@ -32,7 +32,7 @@ type BetCreated @entity(immutable: true) {
   taker: Bytes!
   judge: Bytes!
   totalWager: BigInt!
-  wagerRatio: Int!
+  wagerRatio: BigInt!
   conditions: String!
   expirationBlock: BigInt!
   wagerCurrency: Bytes!

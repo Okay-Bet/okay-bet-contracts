@@ -1,0 +1,21 @@
+[package]
+name = "parlay"
+version = "0.1.0"
+edition = "2024_07"
+
+[dependencies]
+starknet = "2.9.2"
+openzeppelin = "0.20.0"
+
+[dev-dependencies]
+snforge_std = "0.37.0"
+
+[[target.starknet-contract]]
+sierra = true
+casm = true
+
+[tool.snforge]
+# Basic test configuration
+exit_first = true  # Stop on first failure
+
+# Remove the [dev-dependencies] section since snforge_std should be in main dependencies
