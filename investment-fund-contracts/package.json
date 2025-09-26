@@ -1,0 +1,23 @@
+{
+  "name": "investment-fund-contracts",
+  "version": "1.0.0",
+  "description": "Smart contract system for tokenized investment funds",
+  "private": true,
+  "scripts": {
+    "compile": "npx hardhat compile --config ./hardhat.config.js",
+    "test": "npx hardhat test --config ./hardhat.config.js",
+    "coverage": "npx hardhat coverage --config ./hardhat.config.js",
+    "deploy:testnet": "npx hardhat run scripts/deploy.js --network mumbai --config ./hardhat.config.js",
+    "verify": "npx hardhat verify --config ./hardhat.config.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts": "^5.0.0",
+    "hardhat": "^2.19.0",
+    "ethers": "^6.9.0",
+    "chai": "^4.3.10",
+    "solidity-coverage": "^0.8.5"
+  },
+  "keywords": ["solidity", "smart-contracts", "investment-fund"],
+  "license": "MIT"
+}

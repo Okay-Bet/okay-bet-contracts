@@ -5,9 +5,14 @@ coverage.json
 typechain
 typechain-types
 
-#Hardhat files
+# Hardhat files
 cache
 artifacts
 
-# LLMs
-CLAUDE.md
+# Editor
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
