@@ -7,6 +7,10 @@
     "compile": "npx hardhat compile --config ./hardhat.config.js",
     "test": "npx hardhat test --config ./hardhat.config.js",
     "coverage": "npx hardhat coverage --config ./hardhat.config.js",
+    "deploy:factory": "npx hardhat run deploy/001_deploy_fund_factory.js --network amoy --config ./hardhat.config.js",
+    "deploy:fund": "npx hardhat run deploy/002_create_test_fund.js --network amoy --config ./hardhat.config.js",
+    "interact": "npx hardhat run deploy/003_interact_with_fund.js --network amoy --config ./hardhat.config.js",
+    "get-usdc": "npx hardhat run scripts/get-test-usdc.js --network amoy --config ./hardhat.config.js",
     "deploy:testnet": "npx hardhat run scripts/deploy.js --network mumbai --config ./hardhat.config.js",
     "verify": "npx hardhat verify --config ./hardhat.config.js"
   },

@@ -1,0 +1,15 @@
+{
+  "fundName": "Low Min Test Fund",
+  "agentWallet": "0x33937d1634c1C0606D2A99599BD989424BA0B053",
+  "targetRaise": "1000000000",
+  "tradingDuration": 172800,
+  "entryFee": 100,
+  "carriedInterest": 1500,
+  "minInvestment": "5000000",
+  "depositDeadline": 1759031071,
+  "fundAddress": "0x8A136572B7b72AE8582cc49FEB231c4850FE8cD0",
+  "factoryAddress": "0x5eA0B0b61A99c1AbAB3235fd1c358dEaFe426900",
+  "network": "amoy",
+  "createdAt": "2025-09-27T15:44:34.873Z",
+  "transactionHash": "0x5beca471930258b713775568030232dbb1417c8f404c000915753185a1093114"
+}

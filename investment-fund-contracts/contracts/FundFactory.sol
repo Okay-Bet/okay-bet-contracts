@@ -50,7 +50,7 @@ contract FundFactory is Ownable, Pausable {
         require(tradingDuration <= 365 days, "Trading duration too long");
         require(entryFee <= 500, "Entry fee too high");
         require(carriedInterest <= 5000, "Carried interest too high");
-        require(minInvestment >= 10 * 10**6, "Min investment too low");
+        require(minInvestment >= 5 * 10**6, "Min investment too low");
         require(depositDeadline > block.timestamp + 1 hours, "Deadline too soon");
         require(depositDeadline < block.timestamp + 30 days, "Deadline too far");
         

@@ -1,0 +1,15 @@
+{
+  "fundName": "Test Prediction Fund #1",
+  "agentWallet": "0x33937d1634c1C0606D2A99599BD989424BA0B053",
+  "targetRaise": "10000000000",
+  "tradingDuration": "604800",
+  "entryFee": "200",
+  "carriedInterest": "2000",
+  "minInvestment": "100000000",
+  "depositDeadline": "1727708014",
+  "fundAddress": "0xAC52670A10d210253eDE1a49e0E3FC1Fd27dB366",
+  "factoryAddress": "0xb5231F8E48CBfe8222cEae98e62d9ef35E4326fF",
+  "network": "amoy",
+  "createdAt": "2025-09-27T13:53:34.000Z",
+  "transactionHash": "0x928cb4bf388d339f79664b43f02524547a82e94c3e0ea0654a8a32b5be13853e"
+}
