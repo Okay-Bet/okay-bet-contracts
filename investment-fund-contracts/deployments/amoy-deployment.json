@@ -1,0 +1,9 @@
+{
+  "network": "amoy",
+  "fundFactory": "0x5eA0B0b61A99c1AbAB3235fd1c358dEaFe426900",
+  "usdc": "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582",
+  "protocolFee": "50",
+  "owner": "0x33937d1634c1C0606D2A99599BD989424BA0B053",
+  "timestamp": "2025-09-27T15:43:18.504Z",
+  "blockNumber": 26965103
+}
